@@ -21,6 +21,17 @@ except ImportError:
     print("Failed to import line_optim. Make sure the line_refinement package is installed.")
 
 
+def get_group_conv(in_channels, out_channels, kernel_size, stride=1, padding=0, groups=1):
+    if groups == 1:
+        return nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding)
+    else:
+        assert in_channels % groups == 0
+        return nn.Sequential(
+            # Depthwise
+            nn.Conv2d(in_channels, in_channels, kernel_size, stride, padding, groups=in_channels // groups),
+            # Pointwise
+            nn.Conv2d(in_channels, out_channels, 1, 1, 0, groups=1)
+        )
 
 class DeepLSD(BaseModel):
     default_conf = {
@@ -55,41 +66,45 @@ class DeepLSD(BaseModel):
         if conf.model == 'vgg':
             self.backbone = VGGUNet(tiny=self.conf.tiny)
             dim = 32 if self.conf.tiny else 64
+            group_size = 1
         elif conf.model == 'unet':
             # make preprocessing layer more suitable for ImageNet weights
             preprocessing = nn.Conv2d(in_channels=1, out_channels=3, stride=1, padding=0, groups=1, bias=True, kernel_size=1)
             backbone = smp.UnetPlusPlus('mobileone_s4',
                                              encoder_weights='imagenet',
                                              decoder_channels = (256, 128, 64, 64, 64),
+                                        decoder_attention_type='scse',
+                                        decoder_use_batchnorm='inplace',
                                              )
             backbone.segmentation_head = nn.Identity()
             self.backbone = nn.Sequential(preprocessing, backbone)
-            dim = 64
+            group_size = 8
+            dim = 32
         else:
             raise ValueError(f"Unknown model {conf.model}")
 
         # Predict the distance field and angle to the nearest line
         # DF head
         self.df_head = nn.Sequential(
-            nn.Conv2d(dim, 64, kernel_size=3, padding=1),
+            get_group_conv(dim, 64, kernel_size=3, padding=1, groups=group_size),
             nn.ReLU(),
             nn.BatchNorm2d(64),
-            nn.Conv2d(64, 64, kernel_size=3, padding=1),
+            get_group_conv(64, 64, kernel_size=3, padding=1, groups=group_size),
             nn.ReLU(),
             nn.BatchNorm2d(64),
-            nn.Conv2d(64, 1, kernel_size=1),
+            get_group_conv(64, 1, kernel_size=1, groups=group_size),
             nn.ReLU(),
         )
 
         # Closest line direction head
         self.angle_head = nn.Sequential(
-            nn.Conv2d(dim, 64, kernel_size=3, padding=1),
+            get_group_conv(dim, 64, kernel_size=3, padding=1, groups=group_size),
             nn.ReLU(),
             nn.BatchNorm2d(64),
-            nn.Conv2d(64, 64, kernel_size=3, padding=1),
+            get_group_conv(64, 64, kernel_size=3, padding=1, groups=group_size),
             nn.ReLU(),
             nn.BatchNorm2d(64),
-            nn.Conv2d(64, 1, kernel_size=1),
+            get_group_conv(64, 1, kernel_size=1, groups=group_size),
             nn.Sigmoid(),
         )
 
