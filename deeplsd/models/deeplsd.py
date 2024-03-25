@@ -6,6 +6,7 @@ import numpy as np
 import torch
 from torch import nn
 import torch.nn.functional as F
+import segmentation_models_pytorch as smp
 
 from .base_model import BaseModel
 from .backbones.vgg_unet import VGGUNet
@@ -17,8 +18,32 @@ from pytlsd import lsd
 from line_refinement import line_optim
 
 
+def get_norm_params():
+    _mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+    _std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+    return [torch.from_numpy(x.reshape((1, -1, 1, 1))) for x in (_mean, _std)]
+
+
+def make_norm_layer():
+    """
+    We embed classic Imagenet image normalization as part of feature extractor to speed up things
+    and reduce risks of incorrect preprocessing.
+    """
+    mean, std = get_norm_params()
+    weight = 1 / std
+    bias = -mean * weight
+    group_conv = nn.Conv2d(in_channels=3, out_channels=3, stride=1, padding=0, groups=3, bias=True, kernel_size=1)
+
+    state = group_conv.state_dict()
+    state["weight"] = weight.view(3, 1, 1, 1)
+    state["bias"] = bias.view(3)
+    group_conv.load_state_dict(state)
+    return group_conv
+
+
 class DeepLSD(BaseModel):
     default_conf = {
+        'model': "vgg",
         'tiny': False,
         'sharpen': True,
         'line_neighborhood': 5,
@@ -46,8 +71,20 @@ class DeepLSD(BaseModel):
 
     def _init(self, conf):
         # Base network
-        self.backbone = VGGUNet(tiny=self.conf.tiny)
-        dim = 32 if self.conf.tiny else 64
+        if conf.model == 'vgg':
+            self.backbone = VGGUNet(tiny=self.conf.tiny)
+            dim = 32 if self.conf.tiny else 64
+        elif conf.model == 'unet':
+            preprocessing = make_norm_layer()
+            backbone = smp.UnetPlusPlus('mobileone_s4',
+                                             encoder_weights='imagenet',
+                                             decoder_channels = (256, 128, 64, 64, 64),
+                                             )
+            backbone.segmentation_head = nn.Identity()
+            self.backbone = nn.Sequential(preprocessing, backbone)
+            dim = 64
+        else:
+            raise ValueError(f"Unknown model {conf.model}")
 
         # Predict the distance field and angle to the nearest line
         # DF head
