@@ -16,6 +16,7 @@ import multiprocessing as mp
 import torch
 from torch.utils.tensorboard import SummaryWriter
 from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.cuda.amp import GradScaler, autocast
 
 from ..datasets import get_dataset
 from ..models import get_model
@@ -56,7 +57,7 @@ def set_seed(seed):
 def do_evaluation(model, loader, device, loss_fn, metrics_fn, conf):
     model.eval()
     averages = {}
-    for data in tqdm(loader, desc='Evaluation', ascii=True):
+    for data in tqdm(loader, desc='Evaluation'):
         data = batch_to_device(data, device, non_blocking=True)
         with torch.no_grad():
             pred = model(data)
@@ -166,6 +167,7 @@ def training(conf, output_dir, args):
     logging.info(f'Starting training with configuration:\n{OmegaConf.to_yaml(conf)}')
     losses_ = None
 
+    scaler = GradScaler()
     while epoch < conf.train.epochs and not stop:
         logging.info(f'Starting epoch {epoch}')
         set_seed(conf.train.seed + epoch)
@@ -179,11 +181,14 @@ def training(conf, output_dir, args):
             model.train()
             optimizer.zero_grad()
             data = batch_to_device(data, device, non_blocking=True)
-            pred = model(data)
-            losses = loss_fn(pred, data)
-            loss = torch.mean(losses['total'])
-            loss.backward()
-            optimizer.step()
+
+            with autocast():
+                pred = model(data)
+                losses = loss_fn(pred, data)
+                loss = torch.mean(losses['total'])
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
             if it % conf.train.log_every_iter == 0:
                 losses_ = {k: torch.mean(v).item() for k, v in losses.items()}
