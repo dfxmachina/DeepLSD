@@ -15,7 +15,10 @@ from ..geometry.line_utils import (merge_lines, get_line_orientation,
 from ..geometry.homography_adaptation import torch_homography_adaptation
 from ..utils.tensor import preprocess_angle
 from pytlsd import lsd
-from line_refinement import line_optim
+try:
+    from line_refinement import line_optim
+except ImportError:
+    print("Failed to import line_optim. Make sure the line_refinement package is installed.")
 
 
 def get_norm_params():
