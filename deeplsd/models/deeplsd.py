@@ -70,16 +70,16 @@ class DeepLSD(BaseModel):
         elif conf.model == 'unet':
             # make preprocessing layer more suitable for ImageNet weights
             preprocessing = nn.Conv2d(in_channels=1, out_channels=3, stride=1, padding=0, groups=1, bias=True, kernel_size=1)
+            group_size = 8
+            dim = 32
             backbone = smp.UnetPlusPlus('mobileone_s4',
                                              encoder_weights='imagenet',
-                                             decoder_channels = (256, 128, 64, 64, 64),
+                                             decoder_channels = (256, 128, 64, 64, dim),
                                         decoder_attention_type='scse',
                                         decoder_use_batchnorm='inplace',
                                              )
             backbone.segmentation_head = nn.Identity()
             self.backbone = nn.Sequential(preprocessing, backbone)
-            group_size = 8
-            dim = 32
         else:
             raise ValueError(f"Unknown model {conf.model}")
 
