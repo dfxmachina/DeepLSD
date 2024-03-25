@@ -3,7 +3,7 @@ data:
     dataset_dir: "/data/tiles"
     gt_dir: "/data/tiles_processed/"
     num_workers: 8
-    batch_size: 3
+    batch_size: 4
     resize: [768, 768]
     photometric_augmentation:
         enable: True

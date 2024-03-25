@@ -60,9 +60,10 @@ def do_evaluation(model, loader, device, loss_fn, metrics_fn, conf):
     for data in tqdm(loader, desc='Evaluation'):
         data = batch_to_device(data, device, non_blocking=True)
         with torch.no_grad():
-            pred = model(data)
-            losses = loss_fn(pred, data)
-            metrics = metrics_fn(pred, data)
+            with autocast():
+                pred = model(data)
+                losses = loss_fn(pred, data)
+                metrics = metrics_fn(pred, data)
             del pred, data
         results = {**metrics, **{'loss/'+k: v for k, v in losses.items()}}
         for k, v in results.items():
