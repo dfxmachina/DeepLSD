@@ -21,28 +21,6 @@ except ImportError:
     print("Failed to import line_optim. Make sure the line_refinement package is installed.")
 
 
-def get_norm_params():
-    _mean = np.array([0.456], dtype=np.float32)
-    _std = np.array([0.224], dtype=np.float32)
-    return [torch.from_numpy(x.reshape((1, -1, 1, 1))) for x in (_mean, _std)]
-
-
-def make_norm_layer():
-    """
-    We embed classic Imagenet image normalization as part of feature extractor to speed up things
-    and reduce risks of incorrect preprocessing.
-    """
-    mean, std = get_norm_params()
-    weight = 1 / std
-    bias = -mean * weight
-    group_conv = nn.Conv2d(in_channels=1, out_channels=3, stride=1, padding=0, groups=1, bias=True, kernel_size=1)
-
-    state = group_conv.state_dict()
-    state["weight"] = weight.view(3, 1, 1, 1)
-    state["bias"] = bias.view(3)
-    group_conv.load_state_dict(state)
-    return group_conv
-
 
 class DeepLSD(BaseModel):
     default_conf = {
@@ -78,7 +56,8 @@ class DeepLSD(BaseModel):
             self.backbone = VGGUNet(tiny=self.conf.tiny)
             dim = 32 if self.conf.tiny else 64
         elif conf.model == 'unet':
-            preprocessing = make_norm_layer()
+            # make preprocessing layer more suitable for ImageNet weights
+            preprocessing = nn.Conv2d(in_channels=1, out_channels=3, stride=1, padding=0, groups=1, bias=True, kernel_size=1)
             backbone = smp.UnetPlusPlus('mobileone_s4',
                                              encoder_weights='imagenet',
                                              decoder_channels = (256, 128, 64, 64, 64),
