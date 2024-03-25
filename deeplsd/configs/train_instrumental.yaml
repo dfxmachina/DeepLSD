@@ -31,6 +31,7 @@ model:
     name: deeplsd
     sharpen: True
     line_neighborhood: 5
+    model: unet
     loss_weights:
         df: 1.
         angle: 1.
