@@ -2,8 +2,8 @@ data:
     name: instrumental
     dataset_dir: "/data/tiles"
     gt_dir: "/data/tiles_processed/"
-    num_workers: 4
-    batch_size: 4
+    num_workers: 8
+    batch_size: 3
     resize: [768, 768]
     photometric_augmentation:
         enable: True
@@ -27,6 +27,7 @@ data:
     warped_pair: False
     homographic_augmentation: True
     seed: 0
+
 model:
     name: deeplsd
     sharpen: True

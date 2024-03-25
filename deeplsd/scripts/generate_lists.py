@@ -21,7 +21,7 @@ def main(images_dir, gt_dir, new_images_dir=None, new_gt_dir=None):
     num = len(processed)
 
     # split the data 90/10 to train and val
-    split = int(num * 0.9)
+    split = int(num * 0.95)
     with open(os.path.join(images_dir, 'train.txt'), 'w') as f:
         for img in processed[:split]:
             f.write(img + '\n')

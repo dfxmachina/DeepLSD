@@ -101,8 +101,8 @@ class InstrumentalDataset(BaseDataset, torch.utils.data.Dataset):
                           shuffle=shuffle or split == 'train',
                           pin_memory=True, num_workers=num_workers,
                           worker_init_fn=worker_init_fn,
+                          prefetch_factor=num_workers * 4,
                           collate_fn=self.collate_fn)
-
 
 class _Dataset(torch.utils.data.Dataset):
     def __init__(self, conf, split):
@@ -152,6 +152,11 @@ class _Dataset(torch.utils.data.Dataset):
                               np.pi)
             gt_closest = np.array(f['closest']).reshape(h, w, 2)[:, :, [1, 0]]
             bg_mask = np.array(f['bg_mask']).reshape(img_size)
+
+        # maybe crop
+        if self.conf.crop is not None:
+
+
             
         # Convert to the 2D offset to the closest point on a line
         pix_loc = np.stack(np.meshgrid(np.arange(h), np.arange(w),
