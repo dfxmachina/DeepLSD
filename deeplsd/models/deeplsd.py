@@ -75,7 +75,7 @@ class DeepLSD(BaseModel):
             backbone = smp.UnetPlusPlus('mobileone_s4',
                                              encoder_weights='imagenet',
                                              decoder_channels = (256, 128, 64, 64, dim),
-                                        decoder_attention_type='scse',
+                                        # decoder_attention_type='scse',
                                         decoder_use_batchnorm='inplace',
                                              )
             backbone.segmentation_head = nn.Identity()
