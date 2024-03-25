@@ -13,7 +13,11 @@ from .base_model import BaseModel
 from .backbones.vgg_unet import VGGUNet
 from ..geometry.line_utils import get_line_orientation, filter_outlier_lines
 from ..utils.tensor import preprocess_angle
-from line_refinement import line_optim
+try:
+    from line_refinement import line_optim
+except:
+    print("Failed to import line_optim. Make sure the line_refinement package is installed.")
+
 
 
 class LineRefiner(BaseModel):
