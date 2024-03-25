@@ -22,8 +22,8 @@ except ImportError:
 
 
 def get_norm_params():
-    _mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-    _std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+    _mean = np.array([0.456], dtype=np.float32)
+    _std = np.array([0.224], dtype=np.float32)
     return [torch.from_numpy(x.reshape((1, -1, 1, 1))) for x in (_mean, _std)]
 
 
@@ -35,7 +35,7 @@ def make_norm_layer():
     mean, std = get_norm_params()
     weight = 1 / std
     bias = -mean * weight
-    group_conv = nn.Conv2d(in_channels=3, out_channels=3, stride=1, padding=0, groups=3, bias=True, kernel_size=1)
+    group_conv = nn.Conv2d(in_channels=1, out_channels=3, stride=1, padding=0, groups=1, bias=True, kernel_size=1)
 
     state = group_conv.state_dict()
     state["weight"] = weight.view(3, 1, 1, 1)
