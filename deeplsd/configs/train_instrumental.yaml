@@ -50,6 +50,6 @@ train:
     scheduler: 'ReduceLROnPlateau'
     patience: 10
     eval_every_iter: 10000
-    log_every_iter: 500
+    log_every_iter: 200
     keep_last_checkpoints: 3
     seed: 0

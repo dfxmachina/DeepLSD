@@ -17,6 +17,7 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.cuda.amp import GradScaler, autocast
+import coloredlogs
 
 from ..datasets import get_dataset
 from ..models import get_model
@@ -26,6 +27,9 @@ from ..utils.tensor import batch_to_device
 from ..utils.experiments import (
     get_last_checkpoint, get_best_checkpoint, save_experiment)
 from ..settings import EXPER_PATH
+
+logger = logging.getLogger(__name__)
+coloredlogs.install(level='INFO')
 
 
 default_train_conf = {
@@ -170,7 +174,7 @@ def training(conf, output_dir, args):
 
     scaler = GradScaler()
     while epoch < conf.train.epochs and not stop:
-        logging.info(f'Starting epoch {epoch}')
+        logger.info(f'Starting epoch {epoch}')
         set_seed(conf.train.seed + epoch)
         if epoch > 0 and conf.train.dataset_callback_fn:
             getattr(train_loader.dataset, conf.train.dataset_callback_fn)(
@@ -194,7 +198,7 @@ def training(conf, output_dir, args):
             if it % conf.train.log_every_iter == 0:
                 losses_ = {k: torch.mean(v).item() for k, v in losses.items()}
                 str_losses = [f'{k} {v:.8f}' for k, v in losses_.items()]
-                logging.info('[E {} | it {}] loss {{{}}}'.format(
+                logger.info('[E {} | it {}] loss {{{}}}'.format(
                     epoch, it, ', '.join(str_losses)))
                 for k, v in losses_.items():
                     writer.add_scalar('training/'+k, v, tot_it)
@@ -206,7 +210,7 @@ def training(conf, output_dir, args):
                 results = do_evaluation(
                     model, val_loader, device, loss_fn, metrics_fn, conf.train)
                 str_results = [f'{k} {v:.8f}' for k, v in results.items()]
-                logging.info('[Validation] {{{}}}'.format(
+                logger.info('[Validation] {{{}}}'.format(
                     ', '.join(str_results)))
                 for k, v in results.items():
                     writer.add_scalar('val/'+k, v, tot_it)
