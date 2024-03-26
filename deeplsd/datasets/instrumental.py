@@ -145,8 +145,8 @@ class _Dataset(torch.utils.data.Dataset):
         try:
             return self._getitem(item)
         except Exception as e:
-            logger.exception(f"Error in dataset {self.split} at index {item}.")
-            return self._getitem((item + 1) % len(self.images))
+            logger.exception(f"Error in dataset {self.split} at index {item}, file {self.gt[item]}.")
+            return self[(item + 1) % len(self.images)]
 
     def _getitem(self, idx):
         # Read the image
