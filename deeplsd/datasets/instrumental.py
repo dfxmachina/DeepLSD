@@ -18,6 +18,9 @@ from .utils.data_augmentation import photometric_augmentation
 from ..geometry.line_utils import clip_line_to_boundaries
 from ..settings import DATA_PATH
 
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+logger.addHandler(logging.StreamHandler())
 
 class InstrumentalDataset(BaseDataset, torch.utils.data.Dataset):
     default_conf = {
@@ -138,7 +141,14 @@ class _Dataset(torch.utils.data.Dataset):
     def get_dataset(self, split):
         return self
 
-    def __getitem__(self, idx):
+    def __getitem__(self, item):
+        try:
+            return self._getitem(item)
+        except Exception as e:
+            logger.exception(f"Error in dataset {self.split} at index {item}.")
+            return self._getitem((item + 1) % len(self.images))
+
+    def _getitem(self, idx):
         # Read the image
         path = self.images[idx]
         img = cv2.imread(str(path), 0)
