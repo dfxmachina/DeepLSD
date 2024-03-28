@@ -47,7 +47,8 @@ default_train_conf = {
     'load_experiment': None,  # initialize the model from a previous experiment
     'median_metrics': [],  # display the median (not the mean) for some metrics
     'best_key': 'loss/total',  # key to use to select the best checkpoint
-    'dataset_callback_fn': None,  # callback to call at the start of each epoch
+    'dataset_callback_fn': None,  # callback to call at the start of each epoch,
+    "use_fp16": False,
 }
 default_train_conf = OmegaConf.create(default_train_conf)
 
@@ -58,13 +59,22 @@ def set_seed(seed):
     np.random.seed(seed)
 
 
+# empty context manager
+class EmptyContext:
+    def __enter__(self):
+        pass
+
+    def __exit__(self, *args):
+        pass
+
 def do_evaluation(model, loader, device, loss_fn, metrics_fn, conf):
     model.eval()
     averages = {}
     for data in tqdm(loader, desc='Evaluation'):
         data = batch_to_device(data, device, non_blocking=True)
         with torch.no_grad():
-            with autocast():
+            f16_context = autocast() if conf.use_fp16 else EmptyContext()
+            with f16_context:
                 pred = model(data)
                 losses = loss_fn(pred, data)
                 metrics = metrics_fn(pred, data)
@@ -191,9 +201,14 @@ def training(conf, output_dir, args):
                 pred = model(data)
                 losses = loss_fn(pred, data)
                 loss = torch.mean(losses['total'])
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+
+            if conf.train.use_fp16:
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                optimizer.step()
 
             if it % conf.train.log_every_iter == 0:
                 losses_ = {k: torch.mean(v).item() for k, v in losses.items()}
