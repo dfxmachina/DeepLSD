@@ -18,6 +18,9 @@ class AverageMetric:
 
     def update(self, tensor):
         assert tensor.dim() == 1
+        if torch.isnan(tensor).any():
+            print('Warning: NaNs in the tensor')
+            return
         N = len(tensor)
         self._sum += tensor.mean().item() * N
         self._num_examples += N
@@ -36,6 +39,10 @@ class MedianMetric:
 
     def update(self, tensor):
         assert tensor.dim() == 1
+        # check for NaNs
+        if torch.isnan(tensor).any():
+            print('Warning: NaNs in the tensor')
+            return
         self._elements += tensor.cpu().numpy().tolist()
 
     def compute(self):
