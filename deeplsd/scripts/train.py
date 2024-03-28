@@ -197,7 +197,7 @@ def training(conf, output_dir, args):
             optimizer.zero_grad()
             data = batch_to_device(data, device, non_blocking=True)
 
-            fp16_context = autocast if conf.train.use_fp16 else EmptyContext()
+            fp16_context = autocast() if conf.train.use_fp16 else EmptyContext()
             with fp16_context:
                 pred = model(data)
                 losses = loss_fn(pred, data)
