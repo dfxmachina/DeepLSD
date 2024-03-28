@@ -3,7 +3,7 @@ data:
     dataset_dir: "/data/tiles"
     gt_dir: "/data/tiles_processed/"
     num_workers: 8
-    batch_size: 2
+    batch_size: 4
     resize: [768, 768]
     photometric_augmentation:
         enable: True
@@ -32,7 +32,7 @@ model:
     name: deeplsd
     sharpen: True
     line_neighborhood: 5
-    model: unet
+    model: vgg
     loss_weights:
         df: 1.
         angle: 1.
@@ -46,11 +46,11 @@ model:
         grad_thresh: 3
 train:
     epochs: 300
-    lr: 0.001
+    lr: 0.00005
     scheduler: 'ReduceLROnPlateau'
     patience: 10
     eval_every_iter: 10000
     log_every_iter: 200
     keep_last_checkpoints: 3
     seed: 0
-    use_fp16: False
+    use_fp16: True
