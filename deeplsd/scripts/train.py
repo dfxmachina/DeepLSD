@@ -200,6 +200,13 @@ def training(conf, output_dir, args):
             fp16_context = autocast() if conf.train.use_fp16 else EmptyContext()
             with fp16_context:
                 pred = model(data)
+
+                for k, v in pred.items():
+                    if torch.isnan(v).any():
+                        raise ValueError(f'Nan detected in {k} prediction')
+                    if torch.isinf(v).any():
+                        raise ValueError(f'Inf detected in {k} prediction')
+
                 losses = loss_fn(pred, data)
                 loss = torch.mean(losses['total'])
 
