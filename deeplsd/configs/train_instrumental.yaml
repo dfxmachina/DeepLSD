@@ -53,3 +53,4 @@ train:
     log_every_iter: 200
     keep_last_checkpoints: 3
     seed: 0
+    use_fp16: False

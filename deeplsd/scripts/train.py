@@ -73,7 +73,7 @@ def do_evaluation(model, loader, device, loss_fn, metrics_fn, conf):
     for data in tqdm(loader, desc='Evaluation'):
         data = batch_to_device(data, device, non_blocking=True)
         with torch.no_grad():
-            f16_context = autocast() if conf.use_fp16 else EmptyContext()
+            f16_context = autocast() if conf.train.use_fp16 else EmptyContext()
             with f16_context:
                 pred = model(data)
                 losses = loss_fn(pred, data)
