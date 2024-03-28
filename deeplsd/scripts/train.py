@@ -71,10 +71,10 @@ def do_evaluation(model, loader, device, loss_fn, metrics_fn, conf):
     model.eval()
     averages = {}
     for data in tqdm(loader, desc='Evaluation'):
-        data = batch_to_device(data, device, non_blocking=True)
         with torch.no_grad():
             f16_context = autocast() if conf.use_fp16 else EmptyContext()
             with f16_context:
+                data = batch_to_device(data, device, non_blocking=True)
                 pred = model(data)
                 losses = loss_fn(pred, data)
                 metrics = metrics_fn(pred, data)
@@ -195,10 +195,10 @@ def training(conf, output_dir, args):
 
             model.train()
             optimizer.zero_grad()
-            data = batch_to_device(data, device, non_blocking=True)
 
             fp16_context = autocast() if conf.train.use_fp16 else EmptyContext()
             with fp16_context:
+                data = batch_to_device(data, device, non_blocking=True)
                 pred = model(data)
 
                 for k, v in pred.items():
