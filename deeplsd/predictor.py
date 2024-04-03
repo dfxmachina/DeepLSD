@@ -34,17 +34,25 @@ class Predictor:
         self.net = self.net.to(self.device).eval()
 
     def set_threshold(self, new_thresh: float = 3.0):
-        self.net.conf['line_detection_params']['grad_thresh'] = new_thresh
+        self.set_custom_params({'grad_thresh': new_thresh})
 
     def set_filtering(self, new_filtering: bool = True):
-        self.net.conf['line_detection_params']['filtering'] = new_filtering
+        self.set_custom_params({'filtering': new_filtering})
 
-    def predict(self, image: np.ndarray):
+    def set_custom_params(self, new_params: dict, key='line_detection_params'):
+        if key is None:
+            self.net.conf.update(new_params)
+        else:
+            self.net.conf[key].update(new_params)
+
+    def predict(self, image: np.ndarray, with_other=False):
         gray_img = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
         inputs = {'image': torch.tensor(gray_img, dtype=torch.float, device=self.device)[None, None] / 255.}
         with torch.no_grad():
             out = self.net(inputs)
             pred_lines, = out['lines']
+        if with_other:
+            return pred_lines, out
         return pred_lines
 
     @staticmethod
