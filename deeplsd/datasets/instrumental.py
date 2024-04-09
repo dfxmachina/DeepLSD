@@ -12,7 +12,7 @@ import h5py
 from torch.utils.data import DataLoader
 
 from .base_dataset import BaseDataset, worker_init_fn
-from .utils.preprocessing import resize_and_crop
+from .utils.preprocessing import resize_and_crop, crop
 from .utils.homographies import sample_homography, warp_lines, warp_points
 from .utils.data_augmentation import photometric_augmentation
 from ..geometry.line_utils import clip_line_to_boundaries
@@ -21,6 +21,7 @@ from ..settings import DATA_PATH
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 logger.addHandler(logging.StreamHandler())
+
 
 class InstrumentalDataset(BaseDataset, torch.utils.data.Dataset):
     default_conf = {
@@ -47,6 +48,7 @@ class InstrumentalDataset(BaseDataset, torch.utils.data.Dataset):
         },
         'warped_pair': False,
         'homographic_augmentation': False,
+        'double_aug': False,
         'homography': {
             'params': {
                 'translation': True,
@@ -75,7 +77,7 @@ class InstrumentalDataset(BaseDataset, torch.utils.data.Dataset):
         batch_keys = ['name', 'image', 'ref_valid_mask', 'df', 'line_level',
                       'offset', 'bg_mask', 'H_ref', 'warped_image',
                       'warped_valid_mask', 'warped_df', 'warped_line_level',
-                      'warped_offset', 'warped_bg_mask', 'H']
+                      'warped_offset', 'warped_bg_mask', 'H', "alt_image"]
         list_keys = []
 
         outputs = {}
@@ -104,7 +106,7 @@ class InstrumentalDataset(BaseDataset, torch.utils.data.Dataset):
                           shuffle=shuffle or split == 'train',
                           pin_memory=True, num_workers=num_workers,
                           worker_init_fn=worker_init_fn,
-                          prefetch_factor=num_workers * 4,
+                          # prefetch_factor=num_workers * 4 if num_workers > 0 else None,
                           collate_fn=self.collate_fn)
 
 class _Dataset(torch.utils.data.Dataset):
@@ -117,11 +119,9 @@ class _Dataset(torch.utils.data.Dataset):
         
         # Extract the scenes corresponding to the right split
         if split == 'train':
-            scenes_file = os.path.join(dataset_dir,
-                                       'train.txt')
+            scenes_file = os.path.join(dataset_dir, 'train.txt')
         else:
-            scenes_file = os.path.join(dataset_dir,
-                                       'val.txt')
+            scenes_file = os.path.join(dataset_dir, 'val.txt')
         with open(scenes_file, 'r') as f:
             scenes = [line.strip('\n') for line in f.readlines()]
         
@@ -132,11 +132,10 @@ class _Dataset(torch.utils.data.Dataset):
             self.gt.append(Path(os.path.join(gt_dir, os.path.splitext(img)[0] + '.hdf5')))
                 
         # Pre-generate the homographies of the test set for reproducibility
-        if split == 'test' or split == 'val':
-            assert self.conf.resize is not None, "Resize needed for MiniDepth"
-            self.H = [sample_homography(
-                self.conf.resize, **self.conf.homography.params)
-                      for _ in self.images]
+        assert self.conf.resize is not None, "Resize needed for MiniDepth"
+        self.H = [sample_homography(
+            self.conf.resize, **self.conf.homography.params)
+                  for _ in self.images]
 
     def get_dataset(self, split):
         return self
@@ -144,7 +143,7 @@ class _Dataset(torch.utils.data.Dataset):
     def __getitem__(self, item):
         try:
             return self._getitem(item)
-        except Exception as e:
+        except Exception:
             logger.exception(f"Error in dataset {self.split} at index {item}, file {self.gt[item]}.")
             return self[(item + 1) % len(self.images)]
 
@@ -162,6 +161,26 @@ class _Dataset(torch.utils.data.Dataset):
                               np.pi)
             gt_closest = np.array(f['closest']).reshape(h, w, 2)[:, :, [1, 0]]
             bg_mask = np.array(f['bg_mask']).reshape(img_size)
+
+        if self.conf.resize is not None:
+            new_size = self.conf.resize
+
+            if self.split == 'train':
+                # random crop
+                x = np.random.randint(0, w - new_size[1] + 1)
+                y = np.random.randint(0, h - new_size[0] + 1)
+            else:
+                # cental crop
+                x = (w - new_size[1]) // 2
+                y = (h - new_size[0]) // 2
+
+            h, w = new_size
+
+            img = img[y:y+h, x:x+w]
+            gt_df = gt_df[y:y+h, x:x+w]
+            gt_angle = gt_angle[y:y+h, x:x+w]
+            gt_closest = gt_closest[y:y+h, x:x+w]
+            bg_mask = bg_mask[y:y+h, x:x+w]
             
         # Convert to the 2D offset to the closest point on a line
         pix_loc = np.stack(np.meshgrid(np.arange(h), np.arange(w),
@@ -169,18 +188,18 @@ class _Dataset(torch.utils.data.Dataset):
         offset = gt_closest - pix_loc
         
         # Resize the image and GT if necessary
-        if self.conf.resize is not None:
-            scale = np.amax(np.array(self.conf.resize) / img_size)
-            img_size = self.conf.resize
-            h, w = img_size
-            img = resize_and_crop(img, img_size)
-            gt_df = resize_and_crop(gt_df, img_size) * scale
-            gt_angle = resize_and_crop(gt_angle, img_size,
-                                       interp_mode=cv2.INTER_NEAREST)
-            offset = resize_and_crop(offset, img_size,
-                                     interp_mode=cv2.INTER_NEAREST) * scale
-            bg_mask = resize_and_crop(bg_mask, img_size,
-                                      interp_mode=cv2.INTER_NEAREST)
+        # if self.conf.resize is not None:
+        #     scale = np.amax(np.array(self.conf.resize) / img_size)
+        #     img_size = self.conf.resize
+        #     img = resize_and_crop(img, img_size)
+        #     gt_df = resize_and_crop(gt_df, img_size) * scale
+        #     gt_angle = resize_and_crop(gt_angle, img_size,
+        #                                interp_mode=cv2.INTER_NEAREST)
+        #     offset = resize_and_crop(offset, img_size,
+        #                              interp_mode=cv2.INTER_NEAREST) * scale
+        #     bg_mask = resize_and_crop(bg_mask, img_size,
+        #                               interp_mode=cv2.INTER_NEAREST)
+        img_no_aug = img.copy()
 
         # Create a warped pair in test mode
         if self.split == 'test' or self.conf.warped_pair:
@@ -207,6 +226,8 @@ class _Dataset(torch.utils.data.Dataset):
         config_aug = self.conf.photometric_augmentation
         if config_aug.enable:
             img = photometric_augmentation(img, config_aug)
+            if self.conf.double_aug:
+                img_no_aug = photometric_augmentation(img_no_aug, config_aug)
 
         # Normalize the images in [0, 1]
         img = img.astype(np.float32) / 255.
@@ -249,6 +270,9 @@ class _Dataset(torch.utils.data.Dataset):
             data['warped_bg_mask'] = torch.tensor(warped_bg_mask,
                                                   dtype=torch.float)
             data['H'] = torch.tensor(H, dtype=torch.float)
+
+        if self.conf.double_aug:
+            data["alt_image"] = torch.tensor(img_no_aug[None] / 255., dtype=torch.float)
 
         return data
 

@@ -1,10 +1,13 @@
 data:
     name: instrumental
-    dataset_dir: "/data/tiles"
-    gt_dir: "/data/tiles_processed/"
+#    dataset_dir: "/data/tiles"
+#    gt_dir: "/data/tiles_processed/"
+    dataset_dir: "./train_crops/"
+    gt_dir: "./train_gt"
     num_workers: 8
-    batch_size: 4
-    resize: [768, 768]
+    batch_size: 1
+
+    resize: [384, 384]
     photometric_augmentation:
         enable: True
         primitives: ['random_brightness', 'random_contrast',
@@ -26,6 +29,7 @@ data:
                 max_kernel_size: 3
     warped_pair: False
     homographic_augmentation: True
+    double_aug: False
     seed: 0
 
 model:
@@ -44,6 +48,7 @@ model:
         optimize_vps: False
         filtering: True
         grad_thresh: 3
+
 train:
     epochs: 300
     lr: 0.00005
@@ -54,3 +59,4 @@ train:
     keep_last_checkpoints: 3
     seed: 0
     use_fp16: True
+

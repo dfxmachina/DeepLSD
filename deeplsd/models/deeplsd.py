@@ -15,10 +15,6 @@ from ..geometry.line_utils import (merge_lines, get_line_orientation,
 from ..geometry.homography_adaptation import torch_homography_adaptation
 from ..utils.tensor import preprocess_angle
 from pytlsd import lsd
-try:
-    from line_refinement import line_optim
-except ImportError:
-    print("Failed to import line_optim. Make sure the line_refinement package is installed.")
 
 
 def get_group_conv(in_channels, out_channels, kernel_size, stride=1, padding=0, groups=1):
@@ -28,7 +24,7 @@ def get_group_conv(in_channels, out_channels, kernel_size, stride=1, padding=0, 
         assert in_channels % groups == 0
         return nn.Sequential(
             # Depthwise
-            nn.Conv2d(in_channels, in_channels, kernel_size, stride, padding, groups=in_channels // groups),
+            nn.Conv2d(in_channels, in_channels, kernel_size, stride, padding, groups=groups),
             # Pointwise
             nn.Conv2d(in_channels, out_channels, 1, 1, 0, groups=1)
         )
@@ -216,6 +212,11 @@ class DeepLSD(BaseModel):
         vps = np.array([])
         vp_labels = np.array([-1] * len(lines))
         if optimize:
+            try:
+                from line_refinement import line_optim
+            except ImportError:
+                raise ImportError("Failed to import line_optim. Make sure the line_refinement package is installed.")
+
             if merge:
                 lines = merge_lines(lines, thresh=4,
                                     overlap_thresh=0).astype(np.float32)

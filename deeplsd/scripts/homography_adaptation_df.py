@@ -128,6 +128,9 @@ def ha_df(img, num=100, border_margin=3, min_counts=5):
 
 def process_image(img_path, randomize_contrast, num_H, output_folder):
     img = cv2.imread(img_path, 0)
+    if img is None:
+        print(f"Could not read image {img_path}.")
+        return
     if randomize_contrast is not None:
         img = randomize_contrast(img)
     
@@ -137,6 +140,9 @@ def process_image(img_path, randomize_contrast, num_H, output_folder):
     # Save the DF in a hdf5 file
     out_path = os.path.splitext(os.path.basename(img_path))[0]
     out_path = os.path.join(output_folder, out_path) + '.hdf5'
+
+    assert df.shape[:2] == angle.shape[:2] == closest.shape[:2] == bg_mask.shape[:2] == img.shape[:2]
+
     with h5py.File(out_path, "w") as f:
         f.create_dataset("df", data=df.flatten())
         f.create_dataset("line_level", data=angle.flatten())
@@ -153,6 +159,7 @@ def export_ha(images_list, output_folder, num_H=100,
     
     # Random contrast object
     randomize_contrast = random_contrast() if rdm_contrast else None
+    os.makedirs(output_folder, exist_ok=True)
     
     # Process each image in parallel
     Parallel(n_jobs=n_jobs, backend='multiprocessing')(delayed(process_image)(

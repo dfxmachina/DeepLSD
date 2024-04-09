@@ -13,11 +13,6 @@ from .base_model import BaseModel
 from .backbones.vgg_unet import VGGUNet
 from ..geometry.line_utils import get_line_orientation, filter_outlier_lines
 from ..utils.tensor import preprocess_angle
-try:
-    from line_refinement import line_optim
-except:
-    print("Failed to import line_optim. Make sure the line_refinement package is installed.")
-
 
 
 class LineRefiner(BaseModel):
@@ -42,6 +37,11 @@ class LineRefiner(BaseModel):
     required_data_keys = ['image', 'lines']
 
     def _init(self, conf):
+        try:
+            from line_refinement import line_optim
+        except ImportError:
+            raise ImportError("Failed to import line_optim. Make sure the line_refinement package is installed.")
+
         # Base network
         self.backbone = VGGUNet(tiny=self.conf.tiny)
         dim = 32 if self.conf.tiny else 64
@@ -70,7 +70,7 @@ class LineRefiner(BaseModel):
             nn.Conv2d(64, 1, kernel_size=1),
             nn.Sigmoid(),
         )
-    
+
     def normalize_df(self, df):
         return -torch.log(df / self.conf.line_neighborhood + 1e-6)
     

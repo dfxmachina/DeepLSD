@@ -154,7 +154,6 @@ class DeepLSD(BaseModel):
         if merge:
             lines = merge_lines(lines, thresh=4,
                                 overlap_thresh=0).astype(np.float32)
-
         return lines
 
     def loss(self, pred, data):
