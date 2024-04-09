@@ -410,6 +410,7 @@ class Trainer:
             output_dir="/tmp/debug/",
             total_epochs=10,
             queue_size=4096,
+            verbose=False,
     ):
         self.conf = OmegaConf.load(config_path)
         self.conf.data.update({"double_aug": True, "homographic_augmentation": False})
@@ -424,6 +425,8 @@ class Trainer:
 
         self.writer = SummaryWriter(log_dir=str(output_dir))
         self.output_dir = output_dir
+
+        self.verbose = verbose
 
         dataset = get_dataset(self.conf.data.name)(self.conf.data)
         self.train_loader = dataset.get_data_loader("train")
@@ -577,6 +580,15 @@ class Trainer:
                     for k, v in vis_images.items():
                         self.writer.add_image(f"{sample.split}_{k}", v, epoch * batch_size + i, dataformats="HWC")
 
+            if self.verbose and batch_id % 10 == 0 and batch_id > 0:
+                running_avg_loss = np.mean(train_losses[-10:])
+                running_avg_acc = np.average(train_metrics[-10:], weights=train_samples[-10:])
+                running_avg_sold_acc = np.average(sold_metrics[-10:], weights=train_samples[-10:])
+
+                logger.info(
+                    f"Epoch {epoch}, batch {batch_id}, loss: {running_avg_loss:.3f}, acc: {running_avg_acc:.3f}, sold_acc: {running_avg_sold_acc:.3f}"
+                )
+
         self.writer.add_scalar("memory/allocated", torch.cuda.memory_allocated() / 1024 ** 3, epoch)
 
         if epoch == self.total_epochs // 2:
@@ -629,6 +641,16 @@ class Trainer:
                     for k, v in vis_images.items():
                         self.writer.add_image(f"{sample.split}_{k}", v, epoch * batch_size + i, dataformats="HWC")
 
+            if self.verbose and batch_id % 10 == 0 and batch_id > 0:
+                running_avg_loss = np.mean(train_losses[-10:])
+                running_avg_acc = np.average(train_metrics[-10:], weights=train_samples[-10:])
+                running_avg_sold_acc = np.average(sold_metrics[-10:], weights=train_samples[-10:])
+
+                logger.info(
+                    f"Epoch {epoch}, batch {batch_id}, loss: {running_avg_loss:.3f}, acc: {running_avg_acc:.3f}, sold_acc: {running_avg_sold_acc:.3f}"
+                )
+
+
         if val_losses:
             loss = np.mean(val_losses)
             self.writer.add_scalar("val_loss", loss.item(), epoch)
@@ -663,9 +685,10 @@ def main(
         output_dir="/tmp/debug/",
         epochs=20,
         queue_size=4096,
+        verbose=False,
 ):
     trainer = Trainer(
-        config_path, checkpoint_path, output_dir, total_epochs=epochs, queue_size=queue_size
+        config_path, checkpoint_path, output_dir, total_epochs=epochs, queue_size=queue_size, verbose=verbose
     )
     trainer.train()
     trainer.finish()
