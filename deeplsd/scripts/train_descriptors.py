@@ -319,17 +319,25 @@ class ImageSampleBatch:
     def __len__(self):
         return len(self.samples)
 
-    def as_descriptors(self):
-        descriptors = [s.descriptors_a for s in self.samples] + [s.descriptors_b for s in self.samples]
-        descriptors = [d for d in descriptors if d is not None]
+    def as_descriptors(self, max_size=None):
+        descriptors_a = [s.descriptors_a for s in self.samples if s.descriptors_a is not None]
+        descriptors_b = [s.descriptors_b for s in self.samples if s.descriptors_b is not None]
+        if max_size:
+            half = max_size // 2
+            descriptors_a = descriptors_a[:half]
+            descriptors_b = descriptors_b[:half]
+
+        descriptors = descriptors_a + descriptors_b
         if not descriptors:
             return torch.tensor([])
         return torch.cat(descriptors)
 
-
-    def as_labels(self):
+    def as_labels(self, max_size=None):
         labels  = [s.labels for s in self.samples]
         labels = [l for l in labels if l is not None]
+        if max_size:
+            half = max_size // 2
+            labels = labels[:half]
         if not labels:
             return torch.tensor([])
         return torch.cat(labels * 2)
@@ -551,8 +559,8 @@ class Trainer:
         train_losses, train_metrics, sold_metrics, train_samples = [], [], [], []
         for batch_id, batch in enumerate(iter(self.train_loader)):
             sample_batch = self.batch_to_samples(batch, epoch=epoch, batch_id=batch_id)
-            descriptors = sample_batch.as_descriptors()
-            labels = sample_batch.as_labels()
+            descriptors = sample_batch.as_descriptors(max_size=self.queue_size)
+            labels = sample_batch.as_labels(max_size=self.queue_size)
             if not len(descriptors):
                 continue
 
@@ -580,7 +588,7 @@ class Trainer:
                     for k, v in vis_images.items():
                         self.writer.add_image(f"{sample.split}_{k}", v, epoch * batch_size + i, dataformats="HWC")
 
-            if self.verbose and batch_id % 10 == 0 and batch_id > 0:
+            if self.verbose and batch_id % 50 == 0 and batch_id > 0:
                 running_avg_loss = np.mean(train_losses[-10:])
                 running_avg_acc = np.average(train_metrics[-10:], weights=train_samples[-10:])
                 running_avg_sold_acc = np.average(sold_metrics[-10:], weights=train_samples[-10:])
@@ -643,7 +651,7 @@ class Trainer:
                     for k, v in vis_images.items():
                         self.writer.add_image(f"{sample.split}_{k}", v, epoch * batch_size + i, dataformats="HWC")
 
-            if self.verbose and batch_id % 10 == 0 and batch_id > 0:
+            if self.verbose and batch_id % 50 == 0 and batch_id > 0:
                 running_avg_loss = np.mean(train_losses[-10:])
                 running_avg_acc = np.average(train_metrics[-10:], weights=train_samples[-10:])
                 running_avg_sold_acc = np.average(sold_metrics[-10:], weights=train_samples[-10:])
