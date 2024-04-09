@@ -486,6 +486,10 @@ class Trainer:
         self.max_lines_per_image = 1024
         self.sold = KF.SOLD2(pretrained=True).cuda()
 
+    @property
+    def queue_size(self):
+        return self.loss_func.memory_size
+
     @staticmethod
     def get_valid_coords(coords_a, coords_b, height, width):
         coords_a_valid = (
