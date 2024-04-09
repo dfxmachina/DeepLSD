@@ -322,25 +322,33 @@ class ImageSampleBatch:
     def as_descriptors(self, max_size=None):
         descriptors_a = [s.descriptors_a for s in self.samples if s.descriptors_a is not None]
         descriptors_b = [s.descriptors_b for s in self.samples if s.descriptors_b is not None]
+        if descriptors_a:
+            descriptors_a = torch.cat(descriptors_a)
+            descriptors_b = torch.cat(descriptors_b)
+        else:
+            descriptors_a = torch.tensor([])
+            descriptors_b = torch.tensor([])
+
         if max_size:
             half = max_size // 2
             descriptors_a = descriptors_a[:half]
             descriptors_b = descriptors_b[:half]
 
-        descriptors = descriptors_a + descriptors_b
-        if not descriptors:
-            return torch.tensor([])
-        return torch.cat(descriptors)
+        return torch.cat([descriptors_a, descriptors_b])
 
     def as_labels(self, max_size=None):
         labels  = [s.labels for s in self.samples]
         labels = [l for l in labels if l is not None]
-        if max_size:
-            half = max_size // 2
-            labels = labels[:half]
-        if not labels:
-            return torch.tensor([])
-        return torch.cat(labels * 2)
+
+        if labels:
+            labels = torch.cat(labels)
+            if max_size:
+                half = max_size // 2
+                labels = labels[:half]
+        else:
+            labels = torch.tensor([])
+
+        return torch.cat([labels, labels])
 
     def get_matches(self, descriptors=None, greedy=True):
         if descriptors is None:
