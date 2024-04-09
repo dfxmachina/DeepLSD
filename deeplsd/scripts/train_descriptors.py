@@ -423,6 +423,7 @@ class Trainer:
             self,
             config_path,
             checkpoint_path=None,
+            full_checkpoint_path=None,
             output_dir="/tmp/debug/",
             total_epochs=10,
             queue_size=4096,
@@ -431,11 +432,6 @@ class Trainer:
         self.conf = OmegaConf.load(config_path)
         self.conf.data.update({"double_aug": True, "homographic_augmentation": False})
         self.total_epochs = total_epochs
-
-        if checkpoint_path:
-            init_cp = torch.load(str(checkpoint_path), map_location="cpu")
-        else:
-            init_cp = None
 
         OmegaConf.set_struct(self.conf, True)
 
@@ -455,7 +451,8 @@ class Trainer:
             self.conf.model
         )  # type: DeepLSD
 
-        if init_cp is not None:
+        if checkpoint_path:
+            init_cp = torch.load(str(checkpoint_path), map_location="cpu")
             if list(init_cp["model"].keys())[0][:7] == "module.":
                 # Remove 'module.' added by the DataParallel training
                 init_state_dict = {k[7:]: v for k, v in init_cp["model"].items()}
@@ -469,6 +466,10 @@ class Trainer:
         logger.info(f"Model: \n{self.deep_lsd}")
 
         self.model = DescriptorModel(self.deep_lsd.backbone).cuda()
+
+        if full_checkpoint_path:
+            checkpoint = torch.load(str(full_checkpoint_path), map_location="cuda")
+            self.model.load_state_dict(checkpoint)
 
         distance = distances.CosineSimilarity()
         self.mining_func = miners.TripletMarginMiner(
@@ -669,9 +670,9 @@ class Trainer:
 
             verbosity_period = 50
             if self.verbose and batch_id % verbosity_period == 0 and batch_id > 0:
-                running_avg_loss = np.mean(train_losses[-verbosity_period:])
-                running_avg_acc = np.average(train_metrics[-verbosity_period:], weights=train_samples[-verbosity_period:])
-                running_avg_sold_acc = np.average(sold_metrics[-verbosity_period:], weights=train_samples[-verbosity_period:])
+                running_avg_loss = np.mean(val_losses[-verbosity_period:])
+                running_avg_acc = np.average(val_metrics[-verbosity_period:], weights=val_samples[-verbosity_period:])
+                running_avg_sold_acc = np.average(val_sold_metrics[-verbosity_period:], weights=val_samples[-verbosity_period:])
 
                 logger.info(
                     f"Epoch {epoch}, batch {batch_id}/{len(self.val_loader)}, loss: {running_avg_loss:.3f}, acc: {running_avg_acc:.3f}, sold_acc: {running_avg_sold_acc:.3f}"
@@ -719,7 +720,7 @@ def main(
         verbose=False,
 ):
     trainer = Trainer(
-        config_path, checkpoint_path, output_dir, total_epochs=epochs, queue_size=queue_size, verbose=verbose
+        config_path, checkpoint_path, full_checkpoint_path, output_dir, total_epochs=epochs, queue_size=queue_size, verbose=verbose
     )
     trainer.train()
     trainer.finish()
