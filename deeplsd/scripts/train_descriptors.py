@@ -586,7 +586,7 @@ class Trainer:
                 running_avg_sold_acc = np.average(sold_metrics[-10:], weights=train_samples[-10:])
 
                 logger.info(
-                    f"Epoch {epoch}, batch {batch_id}, loss: {running_avg_loss:.3f}, acc: {running_avg_acc:.3f}, sold_acc: {running_avg_sold_acc:.3f}"
+                    f"Epoch {epoch}, batch {batch_id}/{len(self.val_loader)}, loss: {running_avg_loss:.3f}, acc: {running_avg_acc:.3f}, sold_acc: {running_avg_sold_acc:.3f}"
                 )
 
         self.writer.add_scalar("memory/allocated", torch.cuda.memory_allocated() / 1024 ** 3, epoch)
@@ -616,7 +616,9 @@ class Trainer:
         val_losses, val_metrics, val_sold_metrics, val_samples = [], [], [], []
 
         for batch_id, batch in enumerate(iter(self.val_loader)):
-            sample_batch = self.batch_to_samples(batch, epoch=epoch, batch_id=batch_id)
+            with torch.no_grad():
+                with torch.inference_mode():
+                    sample_batch = self.batch_to_samples(batch, epoch=epoch, batch_id=batch_id)
             descriptors = sample_batch.as_descriptors()
             labels = sample_batch.as_labels()
             if not len(descriptors):
@@ -647,9 +649,10 @@ class Trainer:
                 running_avg_sold_acc = np.average(sold_metrics[-10:], weights=train_samples[-10:])
 
                 logger.info(
-                    f"Epoch {epoch}, batch {batch_id}, loss: {running_avg_loss:.3f}, acc: {running_avg_acc:.3f}, sold_acc: {running_avg_sold_acc:.3f}"
+                    f"Epoch {epoch}, batch {batch_id}/{len(self.val_loader)}, loss: {running_avg_loss:.3f}, acc: {running_avg_acc:.3f}, sold_acc: {running_avg_sold_acc:.3f}"
                 )
 
+        self.save_model(f"epoch_{epoch}_")
 
         if val_losses:
             loss = np.mean(val_losses)
@@ -668,15 +671,18 @@ class Trainer:
             self.train_epoch(epoch)
             self.val_epoch(epoch)
 
-    def finish(self):
-        self.writer.close()
+    def save_model(self, prefix=""):
         state = self.model.state_dict()
-        torch.save(state, os.path.join(self.output_dir, "full.pt"))
+        torch.save(state, os.path.join(self.output_dir, f"{prefix}full.pt"))
 
         torch.save(
             {k: v for k, v in state.items() if "backbone" not in k},
-            os.path.join(self.output_dir, "desc_head.pt"),
+            os.path.join(self.output_dir, f"{prefix}desc_head.pt"),
         )
+
+    def finish(self):
+        self.writer.close()
+        self.save_model("final_")
 
 
 def main(
