@@ -714,6 +714,7 @@ class Trainer:
 def main(
         config_path,
         checkpoint_path=None,
+        full_checkpoint_path=None,
         output_dir="/tmp/debug/",
         epochs=20,
         queue_size=4096,
