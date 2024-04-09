@@ -600,14 +600,18 @@ class Trainer:
                     for k, v in vis_images.items():
                         self.writer.add_image(f"{sample.split}_{k}", v, epoch * batch_size + i, dataformats="HWC")
 
-            if self.verbose and batch_id % 50 == 0 and batch_id > 0:
-                running_avg_loss = np.mean(train_losses[-10:])
-                running_avg_acc = np.average(train_metrics[-10:], weights=train_samples[-10:])
-                running_avg_sold_acc = np.average(sold_metrics[-10:], weights=train_samples[-10:])
+            verbosity_period = 50
+            if self.verbose and batch_id % verbosity_period == 0 and batch_id > 0:
+                running_avg_loss = np.mean(train_losses[-verbosity_period:])
+                running_avg_acc = np.average(train_metrics[-verbosity_period:], weights=train_samples[-verbosity_period:])
+                running_avg_sold_acc = np.average(sold_metrics[-verbosity_period:], weights=train_samples[-verbosity_period:])
 
                 logger.info(
-                    f"Epoch {epoch}, batch {batch_id}/{len(self.val_loader)}, loss: {running_avg_loss:.3f}, acc: {running_avg_acc:.3f}, sold_acc: {running_avg_sold_acc:.3f}"
+                    f"Epoch {epoch}, batch {batch_id}/{len(self.train_loader)}, loss: {running_avg_loss:.3f}, acc: {running_avg_acc:.3f}, sold_acc: {running_avg_sold_acc:.3f}"
                 )
+
+            if batch_id % 1000 == 0:
+                self.save_model(f"checkpoint_")
 
         self.writer.add_scalar("memory/allocated", torch.cuda.memory_allocated() / 1024 ** 3, epoch)
 
@@ -663,10 +667,11 @@ class Trainer:
                     for k, v in vis_images.items():
                         self.writer.add_image(f"{sample.split}_{k}", v, epoch * batch_size + i, dataformats="HWC")
 
-            if self.verbose and batch_id % 50 == 0 and batch_id > 0:
-                running_avg_loss = np.mean(train_losses[-10:])
-                running_avg_acc = np.average(train_metrics[-10:], weights=train_samples[-10:])
-                running_avg_sold_acc = np.average(sold_metrics[-10:], weights=train_samples[-10:])
+            verbosity_period = 50
+            if self.verbose and batch_id % verbosity_period == 0 and batch_id > 0:
+                running_avg_loss = np.mean(train_losses[-verbosity_period:])
+                running_avg_acc = np.average(train_metrics[-verbosity_period:], weights=train_samples[-verbosity_period:])
+                running_avg_sold_acc = np.average(sold_metrics[-verbosity_period:], weights=train_samples[-verbosity_period:])
 
                 logger.info(
                     f"Epoch {epoch}, batch {batch_id}/{len(self.val_loader)}, loss: {running_avg_loss:.3f}, acc: {running_avg_acc:.3f}, sold_acc: {running_avg_sold_acc:.3f}"
