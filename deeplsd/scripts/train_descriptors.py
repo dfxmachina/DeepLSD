@@ -617,7 +617,7 @@ class Trainer:
                 self.scaler.update()
                 train_losses.append(loss.item())
 
-            if batch_id == 0:
+            if batch_id % 100:
                 batch_size = len(sample_batch.samples)
                 for i, sample in enumerate(sample_batch.samples):
                     vis_images = sample.get_vis_images()
