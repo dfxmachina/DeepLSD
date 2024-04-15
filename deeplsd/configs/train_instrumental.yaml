@@ -1,9 +1,9 @@
 data:
     name: instrumental
-#    dataset_dir: "/data/tiles"
-#    gt_dir: "/data/tiles_processed/"
-    dataset_dir: "./train_crops/"
-    gt_dir: "./train_gt"
+    dataset_dir: "/data/tiles"
+    gt_dir: "/data/tiles_processed/"
+#    dataset_dir: "./train_crops/"
+#    gt_dir: "./train_gt"
     num_workers: 8
     batch_size: 1
 

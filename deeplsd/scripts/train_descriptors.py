@@ -49,7 +49,7 @@ def batch_to_lines(batch, model, max_lines=1024):
     np_df = dfs.cpu().numpy()
     np_ll = line_level.cpu().numpy()
     for img, df, ll in zip(np_img, np_df, np_ll):
-        line, _, _ = model.detect_afm_lines(img, df, ll, merge=True, filtering=False)
+        line, _, _ = model.detect_afm_lines(img, df, ll, merge=True, filtering=True)
         mask = np.linalg.norm(line[:, 0] - line[:, 1], axis=1) > 30
         line = line[mask]
         line = line[:max_lines]
@@ -95,11 +95,13 @@ def lines_to_points(lines: np.ndarray):
     second = (start + center) / 2
     fourth = (center + end) / 2
     points = (
-        torch.from_numpy(np.array([start, second, center, fourth, end]))
+        # torch.from_numpy(np.array([start, second, center, fourth, end]))
+        # corner ones may be less relevant
+        torch.from_numpy(np.array([second, center, fourth]))
         .float()
         .view(-1, 2)
     )
-    ids = torch.arange(lines.shape[0]).repeat(5)
+    ids = torch.arange(lines.shape[0]).repeat(3)
     return points, ids
 
 
@@ -270,11 +272,24 @@ class ImageSample:
         self.split = split
         self.epoch = epoch
 
+    def as_descriptors(self):
+        if self.descriptors_a is None:
+            return torch.tensor([])
+        return torch.cat([self.descriptors_a, self.descriptors_b])
+
+    def as_labels(self):
+        if self.labels is None:
+            return torch.tensor([])
+        return torch.cat([self.labels, self.labels])
+
     def visualize_matches(self):
-        # FixMe: broken
-        matches = self.get_matches(descriptors, labels)
-        h, w = img.shape
-        joined = cv2.cvtColor(np.hstack([img, warped]), cv2.COLOR_GRAY2BGR).copy()
+        matches = _get_matches(self.as_descriptors(), self.as_labels(), greedy=True)
+        h, w = self.image_a.shape
+        joined = cv2.cvtColor(np.hstack([self.image_a, self.image_b]), cv2.COLOR_GRAY2BGR).copy()
+
+        keypoints_a = self.keypoints_a
+        keypoints_b = self.keypoints_b
+        labels = self.labels
 
         for i, (ka, kb, m) in enumerate(zip(keypoints_a, keypoints_b, matches)):
             color = (0, 255, 0) if m == labels[i] else (255, 0, 0)
@@ -283,6 +298,11 @@ class ImageSample:
             cv2.circle(joined, (x1, y1), 5, color, -1)
             cv2.circle(joined, (x2 + w, y2), 5, color, -1)
             cv2.line(joined, (x1, y1), (x2 + w, y2), color, 1)
+
+            cv2.putText(joined, str(labels[i].item()), (x1, y1), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+            cv2.putText(joined, str(m.item()), (x2 + w, y2), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+
+        return joined
 
     def get_vis_images(self):
         img_color = cv2.cvtColor(self.image_a, cv2.COLOR_GRAY2BGR)
@@ -309,7 +329,29 @@ class ImageSample:
             cv2.circle(warped_color, (x1, y1), 6, color, -1)
             cv2.circle(warped_color, (x2, y2), 6, color, -1)
 
-        return {"image": img_color, "warped": warped_color}
+        return {"image": img_color, "warped": warped_color, 'matches': self.visualize_matches()}
+
+def _get_matches(descriptors, labels, with_scores=False, greedy=True):
+    n = len(labels) // 2
+    labels_a = labels[:n].cuda()
+    descriptors_a = descriptors[:n].cuda()
+    descriptors_b = descriptors[n:].cuda()
+
+    distance = distances.CosineSimilarity()
+
+    # Compute cosine similarity between descriptors
+    with torch.no_grad():
+        with autocast():
+            if greedy:
+                similarities = distance(descriptors_a, descriptors_b)
+                costs = -similarities.cpu().numpy()
+                row_ind, col_ind = linear_sum_assignment(costs)
+                pred_labels = labels_a[col_ind]
+            else:
+                similarities = distance(descriptors_a, descriptors_b)
+                pred_idx = torch.argmax(similarities, dim=1)
+                pred_labels = labels_a[pred_idx]
+            return pred_labels
 
 
 class ImageSampleBatch:
@@ -350,30 +392,11 @@ class ImageSampleBatch:
 
         return torch.cat([labels, labels])
 
-    def get_matches(self, descriptors=None, greedy=True):
+    def get_matches(self, descriptors=None, greedy=False):
         if descriptors is None:
             descriptors = self.as_descriptors()
         labels = self.as_labels()
-        n = len(labels) // 2
-        labels_a = labels[:n].cuda()
-        descriptors_a = descriptors[:n].cuda()
-        descriptors_b = descriptors[n:].cuda()
-
-        distance = distances.CosineSimilarity()
-
-        # Compute cosine similarity between descriptors
-        with torch.no_grad():
-            with autocast():
-                if greedy:
-                    similarities = distance(descriptors_a, descriptors_b)
-                    costs = -similarities.cpu().numpy()
-                    row_ind, col_ind = linear_sum_assignment(costs)
-                    pred_labels = labels_a[col_ind]
-                else:
-                    similarities = distance(descriptors_a, descriptors_b)
-                    pred_idx = torch.argmax(similarities, dim=1)
-                    pred_labels = labels_a[pred_idx]
-                return pred_labels
+        return _get_matches(descriptors, labels, greedy=greedy)
 
     def get_matching_metrics(self, descriptors=None):
         labels = self.as_labels()
@@ -473,7 +496,7 @@ class Trainer:
 
         distance = distances.CosineSimilarity()
         self.mining_func = miners.TripletMarginMiner(
-            margin=0.25, distance=distance, type_of_triplets="semihard"
+            margin=0.25, distance=distance, type_of_triplets="all"
         )
         loss_func = losses.TripletMarginLoss().cuda()
         self.base_loss_func = loss_func
@@ -661,7 +684,7 @@ class Trainer:
                 loss = self.base_loss_func(descriptors, labels, indices_tuple).item()
                 val_losses.append(loss)
 
-            if batch_id == 0:
+            if batch_id % 100:
                 batch_size = len(sample_batch.samples)
                 for i, sample in enumerate(sample_batch.samples):
                     vis_images = sample.get_vis_images()
@@ -728,8 +751,8 @@ def main(
 
 
 # ToDo: more augs,
+# ToDo: less aggressive pixel-level augs?
 # ToDo: more advanced loss / mining
-# ToDo: more keypoints per line / more augs per image
 
 if __name__ == "__main__":
     multiprocessing.set_start_method("spawn", force=True)

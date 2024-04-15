@@ -46,7 +46,10 @@ class Predictor:
             self.net.conf[key].update(new_params)
 
     def predict(self, image: np.ndarray, with_other=False):
-        gray_img = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+        if image.ndim == 3:
+            gray_img = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray_img = image
         inputs = {'image': torch.tensor(gray_img, dtype=torch.float, device=self.device)[None, None] / 255.}
         with torch.no_grad():
             out = self.net(inputs)
