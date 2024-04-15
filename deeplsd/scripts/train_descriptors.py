@@ -16,6 +16,9 @@ from torch.cuda.amp import GradScaler, autocast
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
+import pytlsd
+from skimage import exposure
+
 from deeplsd.datasets import get_dataset
 from deeplsd.datasets.utils.homographies import sample_homography
 from deeplsd.models import get_model
@@ -39,26 +42,23 @@ def transform_lines(lines, H):
 
 
 def batch_to_lines(batch, model, max_lines=1024):
-    images = batch["image"]
-    dfs = batch["df"]
-    line_level = batch["line_level"]
+    images = (batch["image"].cpu().numpy() * 255).astype(np.uint8)
     alt_images = (batch["alt_image"].cpu().numpy() * 255).astype(np.uint8)
 
     lines = []
-    np_img = (images.cpu().numpy()[:, 0] * 255).astype(np.uint8)
-    np_df = dfs.cpu().numpy()
-    np_ll = line_level.cpu().numpy()
-    for img, df, ll in zip(np_img, np_df, np_ll):
-        line, _, _ = model.detect_afm_lines(img, df, ll, merge=True, filtering=True)
-        mask = np.linalg.norm(line[:, 0] - line[:, 1], axis=1) > 30
-        line = line[mask]
-        line = line[:max_lines]
-        lines.append(line)
+    for img in images:
+        grayscale, = img
+        equalized = (exposure.equalize_adapthist(grayscale).astype(np.float32) * 255).astype(np.uint8)
+        detected = pytlsd.lsd(equalized)[:, [1, 0, 3, 2]].reshape(-1, 2, 2)
+        # filter out lines that are too short
+        lengths = np.linalg.norm(detected[:, 0] - detected[:, 1], axis=1)
+        detected = detected[lengths > 20]
+        lines.append(detected)
 
     result = []
 
     for i in range(len(images)):
-        img = np_img[i]
+        img = images[i, 0, :, :]
         alt_img = alt_images[i][0, :, :]
         homo = sample_homography(
             img.shape,
@@ -453,7 +453,7 @@ class Trainer:
             verbose=False,
     ):
         self.conf = OmegaConf.load(config_path)
-        self.conf.data.update({"double_aug": True, "homographic_augmentation": False})
+        self.conf.data.update({"double_aug": True, "homographic_augmentation": False, "only_images": True})
         self.total_epochs = total_epochs
 
         OmegaConf.set_struct(self.conf, True)
@@ -652,7 +652,6 @@ class Trainer:
 
         weighted_sold_acc = np.average(sold_metrics, weights=train_samples)
         self.writer.add_scalar("train_weighted_sold_acc", weighted_sold_acc, epoch)
-
         self.writer.add_scalar("train_diff", weighted_acc - weighted_sold_acc, epoch)
         self.loss_func.reset_queue()
 

@@ -47,6 +47,7 @@ class InstrumentalDataset(BaseDataset, torch.utils.data.Dataset):
             }
         },
         'warped_pair': False,
+        "only_images": False,
         'homographic_augmentation': False,
         'double_aug': False,
         'homography': {
@@ -153,18 +154,23 @@ class _Dataset(torch.utils.data.Dataset):
         img = cv2.imread(str(path), 0)
         img_size = np.array(img.shape)
         h, w = img_size
-        
-        # Read the GT DF, line angle and closest point on a line
-        with h5py.File(str(self.gt[idx]), 'r') as f:
-            gt_df = np.array(f['df']).reshape(img_size)
-            gt_angle = np.mod(np.array(f['line_level']).reshape(img_size),
-                              np.pi)
-            gt_closest = np.array(f['closest']).reshape(h, w, 2)[:, :, [1, 0]]
-            bg_mask = np.array(f['bg_mask']).reshape(img_size)
+
+        if not self.conf.only_images:
+            # Read the GT DF, line angle and closest point on a line
+            with h5py.File(str(self.gt[idx]), 'r') as f:
+                gt_df = np.array(f['df']).reshape(img_size)
+                gt_angle = np.mod(np.array(f['line_level']).reshape(img_size),
+                                  np.pi)
+                gt_closest = np.array(f['closest']).reshape(h, w, 2)[:, :, [1, 0]]
+                bg_mask = np.array(f['bg_mask']).reshape(img_size)
+        else:
+            gt_df = np.zeros((h, w))
+            gt_angle = np.zeros((h, w))
+            gt_closest = np.zeros((h, w, 2))
+            bg_mask = np.ones_like(img)
 
         if self.conf.resize is not None:
             new_size = self.conf.resize
-
             if self.split == 'train':
                 # random crop
                 x = np.random.randint(0, w - new_size[1] + 1)
