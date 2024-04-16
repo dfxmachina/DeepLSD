@@ -41,7 +41,7 @@ def transform_lines(lines, H):
     return transformed_lines.reshape(-1, 2, 2)
 
 
-def batch_to_lines(batch, model, max_lines=1024):
+def batch_to_lines(batch, max_lines=64):
     images = (batch["image"].cpu().numpy() * 255).astype(np.uint8)
     alt_images = (batch["alt_image"].cpu().numpy() * 255).astype(np.uint8)
 
@@ -49,10 +49,20 @@ def batch_to_lines(batch, model, max_lines=1024):
     for img in images:
         grayscale, = img
         equalized = (exposure.equalize_adapthist(grayscale).astype(np.float32) * 255).astype(np.uint8)
-        detected = pytlsd.lsd(equalized)[:, [1, 0, 3, 2]].reshape(-1, 2, 2)
-        # filter out lines that are too short
+        # detected = pytlsd.lsd(equalized)[:, [1, 0, 3, 2]].reshape(-1, 2, 2)
+        detected = pytlsd.lsd(equalized)[:, [0, 1, 2, 3]].reshape(-1, 2, 2)
         lengths = np.linalg.norm(detected[:, 0] - detected[:, 1], axis=1)
-        detected = detected[lengths > 20]
+
+        # hard filter for line length
+        mask = lengths > 30
+        detected = detected[mask]
+        lengths = lengths[mask]
+
+        # pick longest lines only to avoid degenerate cases
+        detected = detected[lengths.argsort()]
+        if len(detected) > max_lines:
+            detected = detected[-max_lines:]
+
         lines.append(detected)
 
     result = []
@@ -111,7 +121,7 @@ def get_descriptors(feature_map: torch.Tensor, coords: torch.Tensor) -> torch.Te
 
     Args:
     - feature_map: The input feature map with shape [C, H, W].
-    - coords: The fractional coordinates from which to extract descriptors, with shape [N, 2].
+    - coords: The fractional coordinates from which to extract descriptors, with shape [N, 2] in X, Y format.
 
     Returns:
     - Descriptors: Extracted descriptors with shape [N, C], where N is the number of coordinates.
@@ -121,9 +131,10 @@ def get_descriptors(feature_map: torch.Tensor, coords: torch.Tensor) -> torch.Te
 
     # Normalize coords to [-1, 1], as required by F.grid_sample
     _, H, W = feature_map.shape[-3:]
-    coords = coords * 2
-    coords[:, 0] = coords[:, 0] / (H - 1) - 1
-    coords[:, 1] = coords[:, 1] / (W - 1) - 1
+
+    coords = coords[:, [1, 0]]  # Convert to Y, X format
+    coords = coords / torch.tensor([W - 1, H - 1]).float().cuda()
+    coords = coords * 2 - 1  # Shape: [N, 2]
     coords = coords.unsqueeze(0).unsqueeze(0)  # Shape: [1, 1, N, 2]
 
     # Apply grid_sample for bilinear interpolation
@@ -133,7 +144,6 @@ def get_descriptors(feature_map: torch.Tensor, coords: torch.Tensor) -> torch.Te
 
     # Remove unnecessary dimensions [1, C, 1, N] -> [N, C]
     descriptors = descriptors.squeeze(0).squeeze(1).transpose(0, 1)
-
     return descriptors
 
 
@@ -289,7 +299,10 @@ class ImageSample:
 
         keypoints_a = self.keypoints_a
         keypoints_b = self.keypoints_b
-        labels = self.labels - self.labels.min()
+
+        offset = self.labels.min()
+        labels = self.labels - offset
+        matches = matches - offset
 
         for i, (ka, kb, m) in enumerate(zip(keypoints_a, keypoints_b, matches)):
             color = (0, 255, 0) if m == labels[i] else (255, 0, 0)
@@ -299,8 +312,8 @@ class ImageSample:
             cv2.circle(joined, (x2 + w, y2), 5, color, -1)
             cv2.line(joined, (x1, y1), (x2 + w, y2), color, 1)
 
-            cv2.putText(joined, str(labels[i].item()), (x1, y1), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 255), 2)
-            cv2.putText(joined, str(m.item()), (x2 + w, y2), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 255), 2)
+            cv2.putText(joined, str(labels[i].item()), (x1, y1), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
+            cv2.putText(joined, str(m.item()), (x2 + w, y2), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
 
         return joined
 
@@ -353,7 +366,6 @@ def _get_matches(descriptors, labels, with_scores=False, greedy=True):
                 pred_labels = labels_a[pred_idx]
             return pred_labels
 
-
 class ImageSampleBatch:
     def __init__(self, samples):
         self.samples = samples
@@ -392,7 +404,7 @@ class ImageSampleBatch:
 
         return torch.cat([labels, labels])
 
-    def get_matches(self, descriptors=None, greedy=False):
+    def get_matches(self, descriptors=None, greedy=True):
         if descriptors is None:
             descriptors = self.as_descriptors()
         labels = self.as_labels()
@@ -404,7 +416,46 @@ class ImageSampleBatch:
         labels_b = labels[n:].cuda()
         pred_labels = self.get_matches(descriptors=descriptors)
         accuracy = (pred_labels == labels_b).float().mean()
+
+        # self.get_intraclass_similarity(descriptors=descriptors)
         return accuracy.item()
+
+    def get_intraclass_similarity(self, descriptors=None):
+        if descriptors is None:
+            descriptors = self.as_descriptors()
+
+        half = len(descriptors) // 2
+        descriptors_a = descriptors[:half]
+        descriptors_b = descriptors[half:]
+
+        distance = distances.CosineSimilarity()
+
+        with torch.no_grad():
+            with autocast():
+                similarities_a = distance(descriptors_a, descriptors_a)
+                similarities_b = distance(descriptors_b, descriptors_b)
+
+        avg_sim_a_total = similarities_a.mean().item()
+        avg_sim_b_total = similarities_b.mean().item()
+
+        labels = self.as_labels()
+
+        sims_a, sims_b = [], []
+        for x in labels.unique():
+            mask = labels == x
+            mask_a = mask[:half]
+            mask_b = mask[half:]
+            if mask_a.sum() > 1:
+                sim_a = similarities_a[mask_a][:, mask_a].mean().item()
+                sim_b = similarities_b[mask_b][:, mask_b].mean().item()
+                sims_a.append(sim_a)
+                sims_b.append(sim_b)
+
+        avg_sim_a = np.mean(sims_a)
+        avg_sim_b = np.mean(sims_b)
+
+        logger.info(f"Intraclass similarity: {avg_sim_a:.4f} -> {avg_sim_b:.4f}")
+        logger.info(f"Interclass similarity: {avg_sim_a_total:.4f} -> {avg_sim_b_total:.4f}")
 
     def get_sold_metrics(self, sold: KF.SOLD2):
         with torch.no_grad():
@@ -435,6 +486,7 @@ class ImageSampleBatch:
                     feature_map_b.squeeze(0), coords_b.cuda()
                 )
 
+        # logger.info("SOLD metrics:")
         acc = self.get_matching_metrics(
             descriptors=torch.cat([descriptors_a, descriptors_b])
         )
@@ -515,7 +567,7 @@ class Trainer:
             params=params,
             lr=3e-4,
         )
-        self.max_lines_per_image = 1024
+        self.max_lines_per_image = 64
         self.sold = KF.SOLD2(pretrained=True).cuda()
 
     @property
@@ -541,7 +593,7 @@ class Trainer:
 
     def batch_to_samples(self, batch, batch_id=0, epoch=0, prefix="train"):
         images_a, images_b, lines_a, lines_b = zip(
-            *batch_to_lines(batch, self.deep_lsd, max_lines=self.max_lines_per_image)
+            *batch_to_lines(batch, max_lines=self.max_lines_per_image)
         )
 
         with autocast():
@@ -618,13 +670,6 @@ class Trainer:
                 train_losses.append(loss.item())
 
             verbosity_period = 200
-            if batch_id % verbosity_period:
-                batch_size = len(sample_batch.samples)
-                for i, sample in enumerate(sample_batch.samples):
-                    vis_images = sample.get_vis_images()
-                    for k, v in vis_images.items():
-                        self.writer.add_image(f"{sample.split}_{k}", v, epoch * batch_size + i, dataformats="HWC")
-
             if self.verbose and batch_id % verbosity_period == 0 and batch_id > 0:
                 running_avg_loss = np.mean(train_losses[-verbosity_period:])
                 running_avg_acc = np.average(train_metrics[-verbosity_period:], weights=train_samples[-verbosity_period:])
@@ -638,6 +683,13 @@ class Trainer:
                 logger.info(
                     f"Epoch {epoch}, batch {batch_id}/{len(self.train_loader)}, loss: {running_avg_loss:.3f}, acc: {running_avg_acc:.3f}, sold_acc: {running_avg_sold_acc:.3f}"
                 )
+
+                batch_size = len(sample_batch.samples)
+                for i, sample in enumerate(sample_batch.samples):
+                    vis_images = sample.get_vis_images()
+                    global_step = epoch * len(self.train_loader) + batch_id * batch_size + i
+                    for k, v in vis_images.items():
+                        self.writer.add_image(f"{sample.split}_{k}", v, global_step=global_step, dataformats="HWC")
 
             if batch_id % 1000 == 0:
                 self.save_model(f"checkpoint_")
@@ -691,13 +743,6 @@ class Trainer:
                 val_losses.append(loss)
 
             verbosity_period = 200
-            if batch_id % verbosity_period:
-                batch_size = len(sample_batch.samples)
-                for i, sample in enumerate(sample_batch.samples):
-                    vis_images = sample.get_vis_images()
-                    for k, v in vis_images.items():
-                        self.writer.add_image(f"{sample.split}_{k}", v, epoch * batch_size + i, dataformats="HWC")
-
             if self.verbose and batch_id % verbosity_period == 0 and batch_id > 0:
                 running_avg_loss = np.mean(val_losses[-verbosity_period:])
                 running_avg_acc = np.average(val_metrics[-verbosity_period:], weights=val_samples[-verbosity_period:])
@@ -706,6 +751,12 @@ class Trainer:
                 logger.info(
                     f"Epoch {epoch}, batch {batch_id}/{len(self.val_loader)}, loss: {running_avg_loss:.3f}, acc: {running_avg_acc:.3f}, sold_acc: {running_avg_sold_acc:.3f}"
                 )
+                batch_size = len(sample_batch.samples)
+                for i, sample in enumerate(sample_batch.samples):
+                    vis_images = sample.get_vis_images()
+                    global_step = epoch * len(self.val_loader) + batch_id * batch_size + i
+                    for k, v in vis_images.items():
+                        self.writer.add_image(f"{sample.split}_{k}", v, global_step, dataformats="HWC")
 
         self.save_model(f"epoch_{epoch}_")
 
