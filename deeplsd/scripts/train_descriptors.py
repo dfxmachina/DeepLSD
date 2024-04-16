@@ -289,7 +289,7 @@ class ImageSample:
 
         keypoints_a = self.keypoints_a
         keypoints_b = self.keypoints_b
-        labels = self.labels
+        labels = self.labels - self.labels.min()
 
         for i, (ka, kb, m) in enumerate(zip(keypoints_a, keypoints_b, matches)):
             color = (0, 255, 0) if m == labels[i] else (255, 0, 0)
@@ -299,8 +299,8 @@ class ImageSample:
             cv2.circle(joined, (x2 + w, y2), 5, color, -1)
             cv2.line(joined, (x1, y1), (x2 + w, y2), color, 1)
 
-            cv2.putText(joined, str(labels[i].item()), (x1, y1), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-            cv2.putText(joined, str(m.item()), (x2 + w, y2), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+            cv2.putText(joined, str(labels[i].item()), (x1, y1), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 255), 2)
+            cv2.putText(joined, str(m.item()), (x2 + w, y2), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 255), 2)
 
         return joined
 
@@ -617,18 +617,23 @@ class Trainer:
                 self.scaler.update()
                 train_losses.append(loss.item())
 
-            if batch_id % 100:
+            verbosity_period = 100
+            if batch_id % verbosity_period:
                 batch_size = len(sample_batch.samples)
                 for i, sample in enumerate(sample_batch.samples):
                     vis_images = sample.get_vis_images()
                     for k, v in vis_images.items():
                         self.writer.add_image(f"{sample.split}_{k}", v, epoch * batch_size + i, dataformats="HWC")
 
-            verbosity_period = 50
             if self.verbose and batch_id % verbosity_period == 0 and batch_id > 0:
                 running_avg_loss = np.mean(train_losses[-verbosity_period:])
                 running_avg_acc = np.average(train_metrics[-verbosity_period:], weights=train_samples[-verbosity_period:])
                 running_avg_sold_acc = np.average(sold_metrics[-verbosity_period:], weights=train_samples[-verbosity_period:])
+
+                self.writer.add_scalar("running_train_loss", running_avg_loss, epoch * len(self.train_loader) + batch_id)
+                self.writer.add_scalar("running_train_acc", running_avg_acc, epoch * len(self.train_loader) + batch_id)
+                self.writer.add_scalar("running_train_sold_acc", running_avg_sold_acc, epoch * len(self.train_loader) + batch_id)
+                self.writer.add_scalar("memory/allocated", torch.cuda.memory_allocated() / 1024 ** 3, epoch * len(self.train_loader) + batch_id)
 
                 logger.info(
                     f"Epoch {epoch}, batch {batch_id}/{len(self.train_loader)}, loss: {running_avg_loss:.3f}, acc: {running_avg_acc:.3f}, sold_acc: {running_avg_sold_acc:.3f}"
@@ -637,7 +642,9 @@ class Trainer:
             if batch_id % 1000 == 0:
                 self.save_model(f"checkpoint_")
 
-        self.writer.add_scalar("memory/allocated", torch.cuda.memory_allocated() / 1024 ** 3, epoch)
+        if not self.verbose:
+            # only report at the end of the epoch
+            self.writer.add_scalar("memory/allocated", torch.cuda.memory_allocated() / 1024 ** 3, epoch)
 
         if epoch == self.total_epochs // 2:
             # FixMe: reduce learning rate using scheduler
@@ -683,14 +690,14 @@ class Trainer:
                 loss = self.base_loss_func(descriptors, labels, indices_tuple).item()
                 val_losses.append(loss)
 
-            if batch_id % 100:
+            verbosity_period = 200
+            if batch_id % verbosity_period:
                 batch_size = len(sample_batch.samples)
                 for i, sample in enumerate(sample_batch.samples):
                     vis_images = sample.get_vis_images()
                     for k, v in vis_images.items():
                         self.writer.add_image(f"{sample.split}_{k}", v, epoch * batch_size + i, dataformats="HWC")
 
-            verbosity_period = 50
             if self.verbose and batch_id % verbosity_period == 0 and batch_id > 0:
                 running_avg_loss = np.mean(val_losses[-verbosity_period:])
                 running_avg_acc = np.average(val_metrics[-verbosity_period:], weights=val_samples[-verbosity_period:])
@@ -740,14 +747,13 @@ def main(
         output_dir="/tmp/debug/",
         epochs=20,
         queue_size=4096,
-        verbose=False,
+        verbose=True,
 ):
     trainer = Trainer(
         config_path, checkpoint_path, full_checkpoint_path, output_dir, total_epochs=epochs, queue_size=queue_size, verbose=verbose
     )
     trainer.train()
     trainer.finish()
-
 
 # ToDo: more augs,
 # ToDo: less aggressive pixel-level augs?
