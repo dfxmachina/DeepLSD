@@ -617,7 +617,7 @@ class Trainer:
                 self.scaler.update()
                 train_losses.append(loss.item())
 
-            verbosity_period = 100
+            verbosity_period = 200
             if batch_id % verbosity_period:
                 batch_size = len(sample_batch.samples)
                 for i, sample in enumerate(sample_batch.samples):
