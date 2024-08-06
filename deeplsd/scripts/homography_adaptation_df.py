@@ -13,6 +13,7 @@ import torch
 from afm_op import afm
 from joblib import Parallel, delayed
 from pytlsd import lsd
+from sklearn.decomposition import PCA
 from tqdm import tqdm
 
 from ..datasets.utils.data_augmentation import random_contrast
@@ -32,8 +33,20 @@ homography_params = {
 }
 
 
+def pca_gray(img):
+    h, w, _ = img.shape
+    _img = img.reshape(-1, 3) / 255.0
+    pca = PCA(n_components=1)
+    _img = pca.fit_transform(_img).reshape(h, w)
+    img = (_img - _img.min()) / (_img.max() - _img.min()) * 255
+    return img
+
+
 def ha_df(img, num=100, border_margin=3, min_counts=5, with_tqdm=False):
     h, w = img.shape[:2]
+    if img.ndim == 3:
+        img = pca_gray(img)
+
     size = (w, h)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (border_margin * 2, border_margin * 2))
 
@@ -73,7 +86,7 @@ def ha_df(img, num=100, border_margin=3, min_counts=5, with_tqdm=False):
     counts_mask = counts == 0
 
     avg_df = torch.nanquantile(torch.where(counts_mask, torch.tensor(float('nan'), device=device), df_maps), 0.1,
-                                 dim=0)
+                               dim=0)
     avg_offset = torch.nanquantile(
         torch.where(counts_mask.unsqueeze(-1), torch.tensor(float('nan'), device=device), offsets), 0.1, dim=0)
     avg_closest = pix_loc + avg_offset
@@ -87,10 +100,11 @@ def ha_df(img, num=100, border_margin=3, min_counts=5, with_tqdm=False):
 
 
 def process_image(img_path, randomize_contrast, num_H, output_folder):
-    img = cv2.imread(img_path, 0)
+    img = cv2.imread(img_path)
     if img is None:
         print(f"Could not read image {img_path}.")
         return
+
     if randomize_contrast is not None:
         img = randomize_contrast(img)
 
@@ -102,11 +116,11 @@ def process_image(img_path, randomize_contrast, num_H, output_folder):
     out_path = os.path.join(output_folder, out_path) + ".hdf5"
 
     assert (
-        df.shape[:2]
-        == angle.shape[:2]
-        == closest.shape[:2]
-        == bg_mask.shape[:2]
-        == img.shape[:2]
+            df.shape[:2]
+            == angle.shape[:2]
+            == closest.shape[:2]
+            == bg_mask.shape[:2]
+            == img.shape[:2]
     )
 
     with h5py.File(out_path, "w") as f:
@@ -121,8 +135,10 @@ def export_ha(images_list, output_folder, num_H=100, rdm_contrast=False, n_jobs=
     with open(images_list, "r") as f:
         image_files = f.readlines()
     image_files = [path.strip("\n") for path in image_files]
+    image_files = [path for path in image_files if os.path.exists(path)]
 
     # Random contrast object
+    print(f"Random contrast: {rdm_contrast}")
     randomize_contrast = random_contrast() if rdm_contrast else None
     os.makedirs(output_folder, exist_ok=True)
 
