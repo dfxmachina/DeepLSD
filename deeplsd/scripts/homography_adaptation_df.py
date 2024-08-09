@@ -36,10 +36,14 @@ homography_params = {
 def pca_gray(img):
     h, w, _ = img.shape
     _img = img.reshape(-1, 3) / 255.0
-    pca = PCA(n_components=1)
-    _img = pca.fit_transform(_img).reshape(h, w)
-    img = (_img - _img.min()) / (_img.max() - _img.min()) * 255
-    return img
+    _img_mean = _img - np.mean(_img, axis=0)
+    covariance_matrix = np.cov(_img_mean, rowvar=False)
+    eigenvalues, eigenvectors = np.linalg.eigh(covariance_matrix)
+    principal_component = np.abs(eigenvectors[:, np.argmax(eigenvalues)])
+    _img_pca = np.dot(_img_mean, principal_component)
+    _img_pca = _img_pca.reshape(h, w)
+    _img_pca = (_img_pca - _img_pca.min()) / (_img_pca.max() - _img_pca.min()) * 255
+    return _img_pca
 
 
 def ha_df(img, num=100, border_margin=3, min_counts=5, with_tqdm=False):
@@ -50,9 +54,7 @@ def ha_df(img, num=100, border_margin=3, min_counts=5, with_tqdm=False):
     size = (w, h)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (border_margin * 2, border_margin * 2))
 
-    # Move computations to GPU
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
     pix_loc = torch.stack(torch.meshgrid(torch.arange(h, device=device),
                                          torch.arange(w, device=device), indexing='ij'), dim=-1)
 
@@ -67,7 +69,7 @@ def ha_df(img, num=100, border_margin=3, min_counts=5, with_tqdm=False):
         H_inv = np.linalg.inv(H)
         warped_img = torch.from_numpy(
             cv2.warpPerspective(img, H, size, borderMode=cv2.BORDER_REPLICATE)).to(device)
-        warped_lines = lsd(warped_img.cpu().numpy(), scale=1, sigma_scale=0.4)[:, [1, 0, 3, 2]].reshape(-1, 2, 2)
+        warped_lines = lsd(warped_img.cpu().numpy(), scale=1, sigma_scale=0.4, grad_nfa=False)[:, [1, 0, 3, 2]].reshape(-1, 2, 2)
         lines = torch.from_numpy(warp_lines(warped_lines, H_inv)).to(device)
 
         num_lines = len(lines)

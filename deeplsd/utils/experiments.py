@@ -8,7 +8,6 @@ import re
 import shutil
 from omegaconf import OmegaConf
 import torch
-import os
 
 from ..settings import EXPER_PATH
 from ..models import get_model
