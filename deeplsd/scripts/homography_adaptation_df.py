@@ -13,8 +13,8 @@ import torch
 from afm_op import afm
 from joblib import Parallel, delayed
 from pytlsd import lsd
-from sklearn.decomposition import PCA
 from tqdm import tqdm
+from skimage import exposure
 
 from ..datasets.utils.data_augmentation import random_contrast
 from ..datasets.utils.homographies import sample_homography, warp_lines
@@ -44,6 +44,15 @@ def pca_gray(img):
     _img_pca = _img_pca.reshape(h, w)
     _img_pca = (_img_pca - _img_pca.min()) / (_img_pca.max() - _img_pca.min()) * 255
     return _img_pca
+
+
+def equalize_clahe(x):
+    return (exposure.equalize_adapthist(x, clip_limit=0.02).astype(np.float32) * 255).astype(np.uint8)
+
+
+def subtract_blurred(x, ksize=31):
+    diff = cv2.subtract(x.astype("float32"), cv2.GaussianBlur(x, (ksize, ksize), 0).astype("float32"))
+    return equalize_clahe(np.clip(x + diff, 0, 255).astype(np.uint8))
 
 
 def ha_df(img, num=100, border_margin=3, min_counts=5, with_tqdm=False):
@@ -87,10 +96,10 @@ def ha_df(img, num=100, border_margin=3, min_counts=5, with_tqdm=False):
 
     counts_mask = counts == 0
 
-    avg_df = torch.nanquantile(torch.where(counts_mask, torch.tensor(float('nan'), device=device), df_maps), 0.1,
+    avg_df = torch.nanquantile(torch.where(counts_mask, torch.tensor(float('nan'), device=device), df_maps), 0.25,
                                dim=0)
     avg_offset = torch.nanquantile(
-        torch.where(counts_mask.unsqueeze(-1), torch.tensor(float('nan'), device=device), offsets), 0.1, dim=0)
+        torch.where(counts_mask.unsqueeze(-1), torch.tensor(float('nan'), device=device), offsets), 0.25, dim=0)
     avg_closest = pix_loc + avg_offset
 
     avg_angle = torch.fmod(torch.atan2(avg_offset[:, :, 0], avg_offset[:, :, 1]) + torch.pi / 2, torch.pi)
@@ -109,6 +118,8 @@ def process_image(img_path, randomize_contrast, num_H, output_folder):
 
     if randomize_contrast is not None:
         img = randomize_contrast(img)
+
+    img = subtract_blurred(img)
 
     # Run homography adaptation
     df, angle, closest, bg_mask = ha_df(img, num=num_H)
