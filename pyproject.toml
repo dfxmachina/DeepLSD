@@ -9,7 +9,7 @@ packages = [{include = "deeplsd"}]
 [tool.poetry.dependencies]
 python = "~3.10"
 numpy = "^1.22.0"
-opencv-python-headless = "4.5.5.64"
+opencv-python-headless = "4.8.1.78"
 omegaconf = "^2.1.0"
 torch = {version = "^2.2.0"}
 torchvision = {version = "^0.17.0"}
