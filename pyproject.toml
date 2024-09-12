@@ -11,8 +11,8 @@ python = "~3.10"
 numpy = "^1.22.0"
 opencv-python-headless = "4.5.5.64"
 omegaconf = "^2.1.0"
-torch = {version = "^2.2.0", source = "torchcpu"}
-torchvision = {version = "^0.17.0", source = "torchcpu"}
+torch = {version = "^2.2.0"}
+torchvision = {version = "^0.17.0"}
 pytlsd = {version = "0.0.2"}
 
 # ToDo: add training dependencies
