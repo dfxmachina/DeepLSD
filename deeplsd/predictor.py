@@ -11,6 +11,8 @@ class Predictor:
     def __init__(self, conf=None, ckpt=None):
         conf = conf or {
             'detect_lines': True,  # Whether to detect lines or only DF/AF
+            'multiscale': False,
+            'scale_factors': [1.],
             'line_detection_params': {
                 'merge': False,  # Whether to merge close-by lines
                 # 'optimize': False,  # Whether to refine the lines after detecting them
