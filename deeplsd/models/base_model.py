@@ -64,11 +64,11 @@ class BaseModel(nn.Module, metaclass=ABCMeta):
             for p in self.parameters():
                 p.requires_grad = False
 
-    def forward(self, data):
+    def forward(self, data, **kwargs):
         """Check the data and call the _forward method of the child model."""
         for key in self.required_data_keys:
             assert key in data, 'Missing key {} in data'.format(key)
-        return self._forward(data)
+        return self._forward(data, **kwargs)
 
     @abstractmethod
     def _init(self, conf):
@@ -76,7 +76,7 @@ class BaseModel(nn.Module, metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-    def _forward(self, data):
+    def _forward(self, data, **kwargs):
         """To be implemented by the child class."""
         raise NotImplementedError
 

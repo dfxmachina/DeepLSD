@@ -14,6 +14,17 @@ from ..utils.tensor import preprocess_angle
 from pytlsd import lsd
 
 
+def angular_diff(a, b):
+    ac = np.exp(1j * np.array(a))
+    bc = np.exp(1j * np.array(b))
+
+    clockwise = np.angle(bc / ac) % np.pi
+    counterclockwise = np.pi - clockwise
+
+    diffs = np.minimum(clockwise, counterclockwise)
+    return diffs
+
+
 class DeepLSD(BaseModel):
     default_conf = {
         'line_neighborhood': 5,
@@ -69,7 +80,7 @@ class DeepLSD(BaseModel):
     def denormalize_df(self, df_norm):
         return torch.exp(-df_norm) * self.conf.line_neighborhood
 
-    def _forward(self, data):
+    def _forward(self, data, **kwargs):
         outputs = {}
 
         if self.conf.multiscale:
@@ -90,6 +101,14 @@ class DeepLSD(BaseModel):
             np_img = (data['image'].cpu().numpy()[:, 0] * 255).astype(np.uint8)
             np_df = outputs['df'].cpu().numpy()
             np_ll = outputs['line_level'].cpu().numpy()
+
+            if kwargs.get("suppress_angle"):
+                expected_angle = kwargs["expected_angle"]
+                allowed_angle_diff = kwargs["allowed_angle_diff"]
+                angle_diff = angular_diff(np_ll, expected_angle)
+                mask = np.abs(angle_diff) < allowed_angle_diff
+                np_df[mask] = self.conf.line_neighborhood
+
             for img, df, ll in zip(np_img, np_df, np_ll):
                 line = self.detect_afm_lines(
                     img, df, ll, **self.conf.line_detection_params)
@@ -133,6 +152,7 @@ class DeepLSD(BaseModel):
         gradnorm = np.maximum(5 - df, 0).astype(np.float64)
         angle = line_level.astype(np.float64) - np.pi / 2
         angle = preprocess_angle(angle, img, mask=True)[0]
+
         angle[gradnorm < grad_thresh] = -1024
         lines = lsd(
             img.astype(np.float64), scale=1., gradnorm=gradnorm,
