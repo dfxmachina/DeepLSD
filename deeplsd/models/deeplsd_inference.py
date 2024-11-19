@@ -104,7 +104,7 @@ class DeepLSD(BaseModel):
 
             if kwargs.get("suppress_angle"):
                 expected_angle = kwargs["expected_angle"]
-                allowed_angle_diff = kwargs["allowed_angle_diff"]
+                allowed_angle_diff = kwargs["expected_angle_diff"]
                 angle_diff = angular_diff(np_ll, expected_angle)
                 mask = np.abs(angle_diff) < allowed_angle_diff
                 np_df[mask] = self.conf.line_neighborhood
