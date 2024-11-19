@@ -47,7 +47,7 @@ class Predictor:
         else:
             self.net.conf[key].update(new_params)
 
-    def predict(self, image: np.ndarray, with_other=False, allowed_angle: float | None = None, allowed_angle_deviation: float | None = None):
+    def predict(self, image: np.ndarray, with_other=False, expected_angle: float | None = None, expected_angle_diff: float | None = None):
         if image.ndim == 3:
             gray_img = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         else:
@@ -55,8 +55,8 @@ class Predictor:
         inputs = {'image': torch.tensor(gray_img, dtype=torch.float, device=self.device)[None, None] / 255.}
         with torch.no_grad():
             with torch.cuda.amp.autocast(enabled=torch.cuda.is_available()):
-                if allowed_angle is not None:
-                    forward_kwargs = {'allowed_angle': allowed_angle, 'allowed_angle_deviation': allowed_angle_deviation, 'suppress_angle': True}
+                if expected_angle is not None:
+                    forward_kwargs = {'expected_angle': expected_angle, 'expected_angle_diff': expected_angle_diff, 'suppress_angle': True}
                 else:
                     forward_kwargs = {}
                 out = self.net(inputs, **forward_kwargs)
