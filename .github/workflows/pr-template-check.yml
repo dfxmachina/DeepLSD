@@ -1,0 +1,241 @@
+name: PR Template Check
+
+# Enforces the PR description template (.github/pull_request_template.md), which is
+# aligned to the INS-POL-CHG change-management policy. Hard-fails when a required
+# section is missing; posts a non-blocking advisory when security-impact areas are
+# flagged so DSO review is not silently skipped.
+#
+# To actually gate merges, add the "validate" job below as a required status check
+# in the repo's branch-protection rules for master.
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+concurrency:
+  group: pr-template-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    env:
+      PR_BODY: ${{ github.event.pull_request.body }}
+      TEMPLATE_URL: https://github.com/${{ github.repository }}/blob/master/.github/pull_request_template.md
+    steps:
+      - name: Validate PR description against template
+        run: |
+          set -euo pipefail
+
+          errors=()
+          notes=()
+
+          body="$PR_BODY"
+          if [[ -z "${body// /}" ]]; then
+            {
+              echo "## ❌ PR Template Check failed"
+              echo ""
+              echo "The PR description is empty."
+              echo ""
+              echo "### How to become compliant"
+              echo "Click **Edit** on the PR description and fill in the [PR template]($TEMPLATE_URL):"
+              echo "link the Jira ticket, select a Risk Rank, and complete the required sections."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::PR description is empty. Fill in the PR template from .github/pull_request_template.md."
+            exit 1
+          fi
+
+          # Normalize the body before scanning so guidance/example content cannot
+          # satisfy or skew the checks. Template fields are never legitimately
+          # inside an HTML comment or a code fence.
+          #   * Drop HTML comments using HTML's own rule — "<!--" to the NEXT "-->",
+          #     non-greedy. A genuinely unclosed "<!--" (no later "-->") matches
+          #     nothing and is left intact, so it cannot delete the fields after it.
+          #   * Drop fenced code blocks (a pasted copy of the template must not
+          #     supply a ticket or checked box), but only when balanced (an even
+          #     number of ``` lines). An unclosed fence is left intact so it cannot
+          #     hide the fields that follow it.
+          body_no_comments="$(perl -0777 -pe 's/<!--.*?-->//gs' <<< "$body")"
+          # Preserve pre-fence-stripped body for rollback check — rollback steps
+          # are commonly documented as code blocks and should count as content.
+          body="$body_no_comments"
+          if (( $(grep -cE '^[[:space:]]*```' <<< "$body" || true) % 2 == 0 )); then
+            body="$(awk '
+              /^[[:space:]]*```/ { fence = !fence; next }
+              !fence { print }
+            ' <<< "$body")"
+          fi
+
+          # get_section <heading> — sets SECTION to the lines under the first
+          # matching "## <heading>" section, and SECTION_COUNT to how many such
+          # headings exist. Every check scopes to its section (never the whole
+          # body) so a value quoted under another heading cannot satisfy it. A
+          # well-formed template has exactly one of each heading; duplicates are
+          # rejected by the callers so a pasted copy cannot shadow the real field.
+          get_section() {
+            local re="^##[[:space:]]+$1"
+            SECTION_COUNT="$(grep -cE "$re" <<< "$body" || true)"
+            SECTION="$(awk -v re="$re" '
+              /^##[[:space:]]/ { grab=0 }
+              $0 ~ re && !seen { grab=1; seen=1; next }
+              grab { print }
+            ' <<< "$body")"
+          }
+
+          # get_section_no_fences <heading> — like get_section but works on
+          # body_no_comments (before fence stripping). Headings inside code fences
+          # are skipped so a pasted template cannot shadow the real section or
+          # trigger false duplicates. Content inside fences is preserved so rollback
+          # commands count as real text. Sets SECTION_HAS_REAL_CONTENT based on
+          # non-fenced prose OR fenced content without a duplicate heading.
+          get_section_no_fences() {
+            local re="^##[[:space:]]+$1"
+            SECTION_COUNT="$(awk -v re="$re" '
+              /^[[:space:]]*```/ { fence = !fence }
+              !fence && $0 ~ re { count++ }
+              END { print count+0 }
+            ' <<< "$body_no_comments")"
+            # Single marker appended: "###_XY" where X = real prose outside fences,
+            # Y = fenced content without dup heading (each "1" or "0").
+            SECTION="$(awk -v re="$re" '
+              /^[[:space:]]*```/ { fence = !fence; next }
+              !fence && /^##[[:space:]]/ { grab=0; in_unclosed_comment=0 }
+              !fence && $0 ~ re && !seen { grab=1; seen=1; next }
+              grab { print }
+              {
+                if (in_unclosed_comment) {
+                  if (index($0, "-->")) {
+                    in_unclosed_comment = 0
+                  }
+                } else if (index($0, "<!--")) {
+                  if (!index($0, "-->") || index($0, "-->") < index($0, "<!--")) {
+                    in_unclosed_comment = 1
+                  }
+                }
+              }
+              grab && !fence && /[^[:space:]]/ && !in_unclosed_comment { real=1 }
+              grab && fence && /[^[:space:]]/ { fenced=1 }
+              grab && fence && $0 ~ re { fenced_dup=1 }
+              END {
+                if (fenced_dup) fenced=0
+                printf "###_%s%s\n", real+0, fenced+0
+              }
+            ' <<< "$body_no_comments")"
+            SECTION_HAS_REAL_CONTENT="$(tail -1 <<< "$SECTION" | cut -c5-6)"
+            SECTION="$(sed '$ d' <<< "$SECTION")"
+            # real content = has prose outside fences, OR fenced content without dup heading
+            if [[ "${SECTION_HAS_REAL_CONTENT:0:1}" == "1" || "${SECTION_HAS_REAL_CONTENT:1:1}" == "1" ]]; then
+              SECTION_HAS_REAL_CONTENT="true"
+            else
+              SECTION_HAS_REAL_CONTENT="false"
+            fi
+          }
+
+          # ---------------------------------------------------------------------
+          # 1. Jira ticket — require a work item key (e.g. INS-1234) on the
+          #    "Linked work item:" line, or an Atlassian browse URL, within the
+          #    "Jira Ticket" section. Section-scoping avoids false positives from
+          #    unrelated tokens (UTF-8, SHA-256, CVE-2024) and from a ticket quoted
+          #    elsewhere. The template seeds a bare "INS-" with no number, which
+          #    must NOT satisfy this check.
+          # ---------------------------------------------------------------------
+          get_section "Jira Ticket"
+          if [[ "$SECTION_COUNT" -gt 1 ]]; then
+            errors+=("**Duplicate \`## Jira Ticket\` heading.** Remove any pasted or example copy so only the real section remains.")
+          elif grep -qiE '^[[:space:]]*Linked work item:.*[A-Z][A-Z0-9]+-[0-9]+' <<< "$SECTION" \
+               || grep -qiE 'atlassian\.net/browse/[A-Z][A-Z0-9]+-[0-9]+' <<< "$SECTION"; then
+            echo "Jira ticket reference found."
+          else
+            errors+=("**Jira ticket missing.** Under **Jira Ticket**, on the \`Linked work item:\` line, add a ticket key such as \`INS-1234\` (it is currently blank or shows only \`INS-\`). A full Atlassian browse URL also works.")
+          fi
+
+          # ---------------------------------------------------------------------
+          # 2. Risk Rank — exactly one of the two boxes must be checked.
+          #    "Minimal risk" is matched exactly so it does not also match the
+          #    "More-than-minimal risk" line.
+          # ---------------------------------------------------------------------
+          minimal_checked=false
+          morethan_checked=false
+          get_section "Risk Rank"
+          if [[ "$SECTION_COUNT" -gt 1 ]]; then
+            errors+=("**Duplicate \`## Risk Rank\` heading.** Remove any pasted or example copy so only the real section remains.")
+          else
+            if grep -qiE '^[[:space:]]*-[[:space:]]\[x\][[:space:]]+Minimal risk' <<< "$SECTION"; then
+              minimal_checked=true
+            fi
+            if grep -qiE '^[[:space:]]*-[[:space:]]\[x\][[:space:]]+More-than-minimal risk' <<< "$SECTION"; then
+              morethan_checked=true
+            fi
+            if [[ "$minimal_checked" == true && "$morethan_checked" == true ]]; then
+              errors+=("**Two risk levels selected.** Under **Risk Rank**, check exactly one box — either \`Minimal risk\` or \`More-than-minimal risk\`, not both.")
+            elif [[ "$minimal_checked" == false && "$morethan_checked" == false ]]; then
+              errors+=("**No risk level selected.** Under **Risk Rank**, check exactly one box: \`- [x] Minimal risk\` or \`- [x] More-than-minimal risk\`.")
+            fi
+          fi
+
+          # ---------------------------------------------------------------------
+          # 3. Rollback Approach — required when the change is more-than-minimal
+          #    risk. The section must contain real content once HTML comments are
+          #    stripped.
+          # ---------------------------------------------------------------------
+          if [[ "$morethan_checked" == true ]]; then
+            get_section_no_fences "Rollback Approach"
+            if [[ "$SECTION_COUNT" -gt 1 ]]; then
+              errors+=("**Duplicate \`## Rollback Approach\` heading.** Remove any pasted or example copy so only the real section remains.")
+            else
+              if [[ "$SECTION_HAS_REAL_CONTENT" != true ]]; then
+                errors+=("**Rollback Approach is empty.** You selected \`More-than-minimal risk\`, so INS-POL-CHG requires a documented rollback. Describe the revert steps under the **Rollback Approach** heading (replace the template comment).")
+              fi
+            fi
+          fi
+
+          # ---------------------------------------------------------------------
+          # Advisory (non-blocking): flag security-impact areas so DSO review per
+          # INS-POL-CHG is not silently skipped.
+          # ---------------------------------------------------------------------
+          get_section "Security Impact Review"
+          if grep -qiE '^[[:space:]]*-[[:space:]]\[x\]' <<< "$SECTION"; then
+            notes+=("One or more **Security Impact Review** areas are flagged — ensure a DSO review happens before merge (INS-POL-CHG).")
+          fi
+
+          # ---------------------------------------------------------------------
+          # Report
+          # ---------------------------------------------------------------------
+          if [[ ${#errors[@]} -gt 0 ]]; then
+            {
+              echo "## ❌ PR Template Check failed"
+              echo ""
+              echo "This PR's description is missing required fields from the [PR template]($TEMPLATE_URL) (change-management policy INS-POL-CHG)."
+              echo ""
+              echo "### What to fix"
+              for e in "${errors[@]}"; do echo "- $e"; done
+              echo ""
+              echo "### How to become compliant"
+              echo "1. Click **Edit** on the PR description above — this is a description change, not code, so no new commit is needed."
+              echo "2. Fix each item listed under **What to fix**, following the [PR template]($TEMPLATE_URL)."
+              echo "3. Save. This check re-runs automatically on every description edit."
+            } >> "$GITHUB_STEP_SUMMARY"
+            if [[ ${#notes[@]} -gt 0 ]]; then
+              { echo ""; echo "### Advisory (non-blocking)"; for n in "${notes[@]}"; do echo "- $n"; done; } >> "$GITHUB_STEP_SUMMARY"
+            fi
+            echo "PR template validation failed. Fix the following in the PR description:"
+            for e in "${errors[@]}"; do
+              # Strip markdown emphasis for the plain-text workflow annotation.
+              clean="${e//\*\*/}"; clean="${clean//\`/}"
+              echo "::error::${clean}"
+            done
+            exit 1
+          fi
+
+          {
+            echo "## ✅ PR Template Check passed"
+            if [[ ${#notes[@]} -gt 0 ]]; then
+              echo ""
+              echo "### Advisory (non-blocking)"
+              for n in "${notes[@]}"; do echo "- $n"; done
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "PR template validation passed."
