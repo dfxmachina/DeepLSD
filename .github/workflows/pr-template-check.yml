@@ -1,0 +1,9 @@
+name: PR Template Check
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+jobs:
+  check-pr-template:
+    uses: dfxmachina/.github/.github/workflows/pr-template-check.yml@v1.0.0

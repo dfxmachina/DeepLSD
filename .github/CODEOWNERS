@@ -1,0 +1,10 @@
+# CODEOWNERS for this repository.
+# Each line is a file pattern followed by one or more owners.
+# These owners will be requested for review when someone opens a pull request.
+# See https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# ML code owners
+*                                           @dfxmachina/Code_Owners_ML
+
+# SRE code owners
+/.github/                                   @dfxmachina/Code_Owners_SRE @dfxmachina/Code_Owners_ML
